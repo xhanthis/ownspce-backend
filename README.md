@@ -40,7 +40,7 @@ cmd/dev                   run the same router on localhost
 cmd/keygen                generate the Ed25519 session keypair
 ```
 
-`docs/api.md` is the full endpoint reference. `docs/client-crypto.md` is the contract client teams must implement.
+`docs/api.md` is the full endpoint reference. `docs/client-crypto.md` is the contract client teams must implement. `docs/ownspce.postman_collection.json` is an importable Postman collection covering all 33 endpoints — import it plus `docs/ownspce-local.postman_environment.json` to point at a local server.
 
 ## Local setup
 
@@ -68,7 +68,7 @@ The integration suite creates its own users and deletes them afterwards (deletio
 
 ## Deploy
 
-Live now at **https://ownspce-backend.vercel.app/v1** (Vercel project `ownspce-backend`, scope `xhanthis-projects`). `api.ownspce.com` is attached to the project and waiting on one DNS record — see below.
+Live at **https://api.ownspce.com/v1** (Vercel project `ownspce-backend`, scope `xhanthis-projects`), also reachable at `https://ownspce-backend.vercel.app/v1`.
 
 ```bash
 vercel --prod                                   # build + deploy
@@ -84,15 +84,18 @@ Three deployment facts worth knowing before changing anything:
 - Vercel Deployment Protection (SSO) is **off** for this project. It is on by default and makes every route answer `302` to a login page, which would break the API for clients.
 - Migrations are not run by the deploy. Run `go run ./cmd/migrate up` against `DATABASE_URL_UNPOOLED` (see `.github/workflows/ci.yml`).
 
-### DNS for api.ownspce.com
+### DNS and TLS for api.ownspce.com
 
-`ownspce.com` uses GoDaddy nameservers (`ns69/ns70.domaincontrol.com`), so the record must be added at the registrar. Replace the existing `A api → 13.202.118.160`:
+`ownspce.com` uses GoDaddy nameservers, so records are managed at the registrar. `api` points at Vercel (`CNAME → 8049648088092b2f.vercel-dns-017.com`) and the domain is verified on this project.
 
+If the domain ever serves the wrong app or an invalid certificate, it is stale edge state from a previous owner of the hostname, not a DNS problem. Confirm the domain is attached and configured, then force certificate issuance:
+
+```bash
+vercel domains inspect api.ownspce.com
+vercel certs issue api.ownspce.com
+echo | openssl s_client -connect api.ownspce.com:443 -servername api.ownspce.com 2>/dev/null \
+  | openssl x509 -noout -subject     # expect CN=api.ownspce.com
 ```
-A      api.ownspce.com    76.76.21.21
-```
-
-Vercel verifies and issues the certificate automatically within a few minutes. Verify with `./scripts/smoke.sh https://api.ownspce.com/v1`.
 
 Public pages are served by the separate **ownspce.com** frontend project at `/@username/slug`; it reads `GET /v1/public/pages/:username/:slug` from this API and streams the HTML blob.
 

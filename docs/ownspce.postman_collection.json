@@ -1,0 +1,893 @@
+{
+  "info": {
+    "_postman_id": "b7c1a2d4-0f36-4c58-9e21-6a1d3f5c8e10",
+    "name": "Ownspce API",
+    "description": "Zero-knowledge sync API for Ownspce.\n\nThe server stores and moves **ciphertext only**. Tier 0 identity and membership data lives in real columns; Tier 1 workspace documents and Tier 2 change logs are opaque sealed blobs the server can never decrypt.\n\n## Getting a session\n\n`POST /auth/session` needs a real Google or Apple ID token, which only a signed-in app can produce. Once you run it, the collection captures `accessToken`, `refreshToken`, `deviceId`, and `userId` automatically; `POST /spaces` captures `spaceId`, and the sync poll captures `sinceCursor`. Everything after that just works.\n\nNo ID token handy? Mint an access token for a test user with `go run ./cmd/e2e` in the repo, or paste one into the `accessToken` collection variable.\n\n## About the sample payloads\n\n`{{sampleCiphertext}}`, `{{sampleSnapshot}}`, `{{sampleWrappedKey}}`, and `{{samplePublicKey}}` are random bytes of the **correct length**, generated fresh before each request. They exercise the API's shape validation, not real encryption — a real client encrypts on-device with XChaCha20-Poly1305 after padding to a bucket. See `docs/client-crypto.md`.\n\nSealed payloads must be exactly `bucket + 40` bytes (24B nonce + 16B tag), where bucket ∈ 1024, 4096, 16384, 65536, 262144. Anything else is rejected with `413 bucket_violation`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Fresh sample crypto material for every request. Correct lengths, random",
+          "// bytes — enough to exercise shape validation, not real ciphertext.",
+          "const randomB64 = (byteCount) =>",
+          "  CryptoJS.lib.WordArray.random(byteCount).toString(CryptoJS.enc.Base64);",
+          "",
+          "const AEAD_OVERHEAD = 40; // 24B nonce + 16B Poly1305 tag",
+          "",
+          "pm.collectionVariables.set('samplePublicKey', randomB64(32));",
+          "pm.collectionVariables.set('sampleWrappedKey', randomB64(80));",
+          "pm.collectionVariables.set('sampleCiphertext', randomB64(1024 + AEAD_OVERHEAD));",
+          "pm.collectionVariables.set('sampleSnapshot', randomB64(4096 + AEAD_OVERHEAD));"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Every endpoint returns JSON, and errors always carry a machine-readable code.",
+          "if (pm.response.code !== 204 && pm.response.code !== 304) {",
+          "  pm.test('response is json', () => pm.response.to.be.json);",
+          "}",
+          "if (pm.response.code >= 400) {",
+          "  pm.test('error has a code', () =>",
+          "    pm.expect(pm.response.json()).to.have.nested.property('error.code'));",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "https://api.ownspce.com/v1", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "refreshToken", "value": "", "type": "string" },
+    { "key": "userId", "value": "", "type": "string" },
+    { "key": "deviceId", "value": "", "type": "string" },
+    { "key": "targetDeviceId", "value": "", "type": "string" },
+    { "key": "memberUserId", "value": "", "type": "string" },
+    { "key": "spaceId", "value": "", "type": "string" },
+    { "key": "keyEpoch", "value": "1", "type": "string" },
+    { "key": "sinceCursor", "value": "0", "type": "string" },
+    { "key": "workspaceVersion", "value": "0", "type": "string" },
+    { "key": "headSeq", "value": "0", "type": "string" },
+    { "key": "username", "value": "", "type": "string" },
+    { "key": "slug", "value": "my-reading-list", "type": "string" },
+    { "key": "snapshotBlobUrl", "value": "", "type": "string" },
+    { "key": "assetUrl", "value": "", "type": "string" },
+    { "key": "samplePublicKey", "value": "", "type": "string" },
+    { "key": "sampleWrappedKey", "value": "", "type": "string" },
+    { "key": "sampleCiphertext", "value": "", "type": "string" },
+    { "key": "sampleSnapshot", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Health & Keys",
+      "description": "Unauthenticated service endpoints.",
+      "item": [
+        {
+          "name": "GET /health",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            },
+            "description": "Liveness plus a database round trip. `200 {\"status\":\"ok\"}` means the function reached Neon through the pooled connection; `503` reports a degraded database."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('healthy', () => pm.response.to.have.status(200));",
+                  "pm.test('database reachable', () =>",
+                  "  pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /.well-known/jwks.json",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/jwks.json",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "jwks.json"]
+            },
+            "description": "The Ed25519 public key used to sign session tokens, so other services can verify them without a shared secret."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Auth & Profile",
+      "description": "Auth identity decides what a user may FETCH. It never grants the ability to DECRYPT anything — that depends solely on device-held keys.",
+      "item": [
+        {
+          "name": "POST /auth/session",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider\": \"google\",\n  \"idToken\": \"PASTE_A_REAL_GOOGLE_OR_APPLE_ID_TOKEN\",\n  \"device\": {\n    \"label\": \"Postman\",\n    \"platform\": \"macos\",\n    \"publicKey\": \"{{samplePublicKey}}\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/session",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "session"]
+            },
+            "description": "Verifies a Google or Apple ID token, creates the user on first call, and registers the calling device's X25519 public key in the same step.\n\nThe **first** live device of an account is `active`; every later one is `pending` until approved by an existing device or provisioned from the recovery phrase. A pending device gets a session so it can poll for approval, but every data route answers `403 device_pending`.\n\n`platform` ∈ ios, macos, android, windows, linux, web, or empty.\n\nOn success this request stores `accessToken`, `refreshToken`, `deviceId`, and `userId` for the rest of the collection."
+            },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "  pm.collectionVariables.set('deviceId', body.device.id);",
+                  "  pm.collectionVariables.set('userId', body.user.id);",
+                  "  if (body.user.username) {",
+                  "    pm.collectionVariables.set('username', body.user.username);",
+                  "  }",
+                  "  pm.test('device status is known', () =>",
+                  "    pm.expect(['active', 'pending']).to.include(body.device.status));",
+                  "} else {",
+                  "  console.log('Sign-in failed — paste a real ID token, or set accessToken by hand.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/refresh",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            },
+            "description": "Rotates the refresh token and returns a fresh access token.\n\nReplaying a token that was already spent returns `401 token_reused` and revokes the **entire family**, so a stolen refresh token buys one request and costs the whole chain. The captured variables update automatically on success."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('accessToken', body.accessToken);",
+                  "  pm.collectionVariables.set('refreshToken', body.refreshToken);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            },
+            "description": "Revokes the calling device's refresh tokens. The access token lives out its remaining minutes; the client also discards its local keys. Returns `204`."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "The caller's Tier 0 profile. Every field here is deliberately server-readable — nothing derived from note content ever appears."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('userId', body.id);",
+                  "  if (body.username) pm.collectionVariables.set('username', body.username);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PATCH /me",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rahul\",\n  \"username\": \"rahul\",\n  \"theme\": \"dark\",\n  \"language\": \"en\",\n  \"notifyEmail\": true,\n  \"notifyPush\": false,\n  \"streakCount\": 7,\n  \"streakUpdatedOn\": \"2026-07-26\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/me", "host": ["{{baseUrl}}"], "path": ["me"] },
+            "description": "Partial Tier 0 update — send any subset.\n\n- `username` must match `^[a-z0-9_]{3,30}$`, be unique (`409 username_taken`) and not reserved (`409 username_reserved`). A username is required before publishing.\n- `theme` ∈ system, light, dark.\n- `recoveryPublicKey` (base64, 32 bytes) registers the account recovery key derived from the user's phrase. Add it to the body once the client has generated the phrase."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  if (body.username) pm.collectionVariables.set('username', body.username);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /users/{username}",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/users/{{username}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["users", "{{username}}"]
+            },
+            "description": "Public @handle lookup for invites and mentions. Returns id, username, name, and avatar only — never email, plan, or settings."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Devices & Keys",
+      "description": "The encryption identity. Private keys never leave the device; the server only ever sees public keys and opaque wrapped keys.",
+      "item": [
+        {
+          "name": "GET /devices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/devices", "host": ["{{baseUrl}}"], "path": ["devices"] },
+            "description": "Lists the account's live devices, including `pending` ones so an already-trusted device can offer approval. A pending device polls this endpoint to watch its own status."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const pending = pm.response.json().devices.filter((d) => d.status === 'pending');",
+                  "  if (pending.length) {",
+                  "    pm.collectionVariables.set('targetDeviceId', pending[0].id);",
+                  "    console.log('captured pending device', pending[0].id);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /devices",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"CLI\",\n  \"platform\": \"linux\",\n  \"publicKey\": \"{{samplePublicKey}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/devices", "host": ["{{baseUrl}}"], "path": ["devices"] },
+            "description": "Adds a device to an already-authenticated account. Device keys are immutable: a new key is always a new device. Re-registering the same public key returns the existing device."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('targetDeviceId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /devices/{deviceId}/pending-keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/devices/{{targetDeviceId}}/pending-keys",
+              "host": ["{{baseUrl}}"],
+              "path": ["devices", "{{targetDeviceId}}", "pending-keys"]
+            },
+            "description": "Tells an approving device exactly what to wrap: the target's public key, and every space still missing a key for it with the epoch to wrap at."
+          },
+          "response": []
+        },
+        {
+          "name": "POST /devices/{deviceId}/approve",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recovery\": false,\n  \"wrappedKeys\": [\n    {\n      \"spaceId\": \"{{spaceId}}\",\n      \"keyEpoch\": {{keyEpoch}},\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/devices/{{targetDeviceId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["devices", "{{targetDeviceId}}", "approve"]
+            },
+            "description": "Activates a pending device and files the space keys wrapped to its public key.\n\nTwo callers are allowed:\n\n1. **An active device of the same account**, after the user compares key fingerprints — `recovery: false`.\n2. **The pending device itself** with `recovery: true`, having unwrapped the recovery-key copies of the space keys from the 24-word phrase locally.\n\nKeys naming a space the user has left, or an epoch that has since rotated, are silently skipped — refetch and retry."
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /devices/{deviceId}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/devices/{{targetDeviceId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["devices", "{{targetDeviceId}}"]
+            },
+            "description": "Revokes a device: refresh tokens die, space keys wrapped to it are deleted, and its **next request** is rejected — the auth middleware re-checks device status on every call, so revocation does not wait for token expiry.\n\nRotate the affected space keys afterwards. Revocation cannot make a device forget a key it already holds."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /keys/{userId}",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/keys/{{memberUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["keys", "{{memberUserId}}"]
+            },
+            "description": "The key directory an inviter wraps for: a user's active device public keys plus their recovery public key.\n\nVerify fingerprints out of band before wrapping — this is the only defence against a malicious server substituting a key here."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Spaces & Membership",
+      "description": "A space is the unit of sharing and of encryption. Multi-device sync and collaboration are the same mechanism — a space with more members.",
+      "item": [
+        {
+          "name": "POST /spaces",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"wrappedKeys\": [\n    {\n      \"deviceId\": \"{{deviceId}}\",\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    },\n    {\n      \"deviceId\": null,\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/spaces", "host": ["{{baseUrl}}"], "path": ["spaces"] },
+            "description": "Creates a space. **No name is accepted** — the space name lives sealed inside its workspace document, so the server never learns it. Sending a `name` field is rejected as an unknown field.\n\n`deviceId: null` means the key is wrapped to the account recovery key (requires `recoveryPublicKey` to be set on the profile). A request whose keys match none of your active devices is rejected: a space nobody can decrypt is never created."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('spaceId', body.id);",
+                  "  pm.collectionVariables.set('keyEpoch', String(body.keyEpoch));",
+                  "  pm.collectionVariables.set('sinceCursor', '0');",
+                  "  pm.collectionVariables.set('workspaceVersion', '0');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /spaces",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/spaces?includeRecoveryKeys=false",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces"],
+              "query": [
+                {
+                  "key": "includeRecoveryKeys",
+                  "value": "false",
+                  "description": "Set true during recovery-phrase provisioning to also receive each space key wrapped to the account recovery key."
+                }
+              ]
+            },
+            "description": "Every space the caller belongs to, each carrying the space key **wrapped for the calling device** so it can start decrypting immediately.\n\nA `null` wrappedKey means this device has not been granted the key yet — it is still pending approval."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const spaces = pm.response.json().spaces || [];",
+                  "  if (spaces.length) {",
+                  "    pm.collectionVariables.set('spaceId', spaces[0].id);",
+                  "    pm.collectionVariables.set('keyEpoch', String(spaces[0].keyEpoch));",
+                  "    pm.collectionVariables.set('headSeq', String(spaces[0].headSeq));",
+                  "    pm.collectionVariables.set('workspaceVersion', String(spaces[0].workspaceVersion));",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /spaces/{id}/members",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/members",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "members"]
+            },
+            "description": "Space participants, described only with Tier 0 identity fields. Requires the viewer role or better."
+          },
+          "response": []
+        },
+        {
+          "name": "POST /spaces/{id}/members",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{memberUserId}}\",\n  \"role\": \"editor\",\n  \"keyEpoch\": {{keyEpoch}},\n  \"wrappedKeys\": [\n    {\n      \"deviceId\": \"REPLACE_WITH_INVITEE_DEVICE_ID\",\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    },\n    {\n      \"deviceId\": null,\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/members",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "members"]
+            },
+            "description": "Owner only. **The invite is the wrapped key** — fetch the invitee's devices from `GET /keys/{userId}`, wrap the space key for each with a sealed box, and post them here.\n\n`role` ∈ editor, viewer. `409` means already a member, or the space key rotated mid-invite: refetch the directory and retry."
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /spaces/{id}/members/{userId}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/members/{{memberUserId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "members", "{{memberUserId}}"]
+            },
+            "description": "The owner removes anyone; a member may remove themselves. The owner cannot be removed (`403 owner_immutable`).\n\n**Rotate the space key next** — removal revokes future fetches but cannot unlearn the key that member already had."
+          },
+          "response": []
+        },
+        {
+          "name": "POST /spaces/{id}/keys",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"newEpoch\": 2,\n  \"wrappedKeys\": [\n    {\n      \"userId\": \"{{userId}}\",\n      \"deviceId\": \"{{deviceId}}\",\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    },\n    {\n      \"userId\": \"{{userId}}\",\n      \"deviceId\": null,\n      \"wrappedKey\": \"{{sampleWrappedKey}}\"\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/keys",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "keys"]
+            },
+            "description": "Owner only. Advances the space to a new key epoch after a member or device was removed.\n\n`newEpoch` must be exactly current + 1. The server validates **coverage** — every remaining member's active devices must receive a key — and rejects the whole rotation with `409 epoch_conflict` otherwise, so a partial rotation can never lock anyone out. It never inspects the key material.\n\nAfter rotating, writes at the old epoch fail with `409 stale_epoch`. Upload a fresh snapshot at the new epoch so old-epoch ciphertext ages out."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('keyEpoch', String(pm.response.json().keyEpoch));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sync",
+      "description": "The encrypted relay. The server assigns sequence numbers and stores opaque blobs; merging happens on the client, because the server cannot read anything.",
+      "item": [
+        {
+          "name": "POST /spaces/{id}/updates",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keyEpoch\": {{keyEpoch}},\n  \"changes\": [\n    {\n      \"cid\": \"{{$guid}}\",\n      \"ciphertext\": \"{{sampleCiphertext}}\"\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/updates",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "updates"]
+            },
+            "description": "Appends sealed change-sets and returns the sequence number each was given. Editor role or better; up to 100 changes per batch.\n\n- `cid` is a client-generated uuid that makes retries idempotent — resending returns the original `seq`.\n- Each ciphertext must be exactly `bucket + 40` bytes or the batch is refused with `413 bucket_violation`.\n- Writing at a rotated epoch gives `409 stale_epoch`: fetch the new wrapped key, re-encrypt, retry.\n\nBatch and debounce (~2s) rather than pushing per keystroke, so upload timing does not leak typing activity."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('headSeq', String(body.head));",
+                  "  pm.test('every change got a sequence number', () =>",
+                  "    pm.expect(body.assigned).to.be.an('array').that.is.not.empty);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /spaces/{id}/updates",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "If-None-Match",
+                "value": "",
+                "description": "Send the previous response's ETag so an idle poll costs a 304.",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/updates?since={{sinceCursor}}&limit=200",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "updates"],
+              "query": [
+                { "key": "since", "value": "{{sinceCursor}}", "description": "Highest seq the client already holds. 0 for a full catch-up." },
+                { "key": "limit", "value": "200", "description": "Max changes per page (server caps at 200)." }
+              ]
+            },
+            "description": "The catch-up poll clients run every 1–2 seconds while a space is open. Viewer role or better.\n\nIf `since` predates compaction the response is `{\"resync\": true, \"snapshot\": {…}}` — load the snapshot, then poll from `nextSince`.\n\nThis request advances the `sinceCursor` variable automatically."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  const body = pm.response.json();",
+                  "  pm.collectionVariables.set('sinceCursor', String(body.nextSince));",
+                  "  pm.collectionVariables.set('headSeq', String(body.head));",
+                  "  pm.collectionVariables.set('workspaceVersion', String(body.workspaceVersion));",
+                  "  if (body.resync) {",
+                  "    console.log('cursor predates compaction — load the snapshot, then poll from', body.nextSince);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /spaces/{id}/snapshot",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uptoSeq\": {{headSeq}},\n  \"keyEpoch\": {{keyEpoch}},\n  \"ciphertext\": \"{{sampleSnapshot}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/snapshot",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "snapshot"]
+            },
+            "description": "Commits a compacted snapshot and truncates the change log up to `uptoSeq`, advancing `oldestSeq` so lagging clients are told to resync.\n\nSend exactly one of `ciphertext` (inline, must fit a padding bucket) or `blobUrl` + `sizeBucket` (after uploading via `PUT /snapshot/blob`).\n\n`409 snapshot_conflict` means the snapshot is behind the stored one, ahead of head, or built under a rotated key. The superseded blob is deleted in the background."
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /spaces/{id}/snapshot/blob",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/octet-stream" }],
+            "body": {
+              "mode": "file",
+              "file": { "src": "" }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/snapshot/blob",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "snapshot", "blob"]
+            },
+            "description": "Raw ciphertext body (**not** JSON) for snapshots too large to inline. Select a file whose size is exactly `bucket + 40` bytes.\n\nReturns `{\"blobUrl\", \"sizeBucket\"}` to pass to `POST /snapshot`. Answers `503` if no blob store is configured. The object path is a random uuid — never derived from content.\n\nUploading through the API rather than handing out a client upload token keeps object creation authorized by space role."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('snapshotBlobUrl', pm.response.json().blobUrl);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /spaces/{id}/snapshot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/snapshot",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "snapshot"]
+            },
+            "description": "The current compacted snapshot descriptor, or `404` before the first compaction. For `storage: \"blob\"`, fetch `blobUrl` directly — it holds ciphertext."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /spaces/{id}/workspace",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/workspace",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "workspace"]
+            },
+            "description": "The sealed Tier 1 document: space name, home page name, archive folder name, tags, page titles, tree, pinned pages. Before the first write it returns `{\"version\": 0, \"ciphertext\": null}`."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('workspaceVersion', String(pm.response.json().version));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PUT /spaces/{id}/workspace",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"baseVersion\": {{workspaceVersion}},\n  \"keyEpoch\": {{keyEpoch}},\n  \"ciphertext\": \"{{sampleCiphertext}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/spaces/{{spaceId}}/workspace",
+              "host": ["{{baseUrl}}"],
+              "path": ["spaces", "{{spaceId}}", "workspace"]
+            },
+            "description": "Replaces the sealed workspace document under optimistic concurrency. `baseVersion: 0` creates it.\n\nA mismatch returns `409 version_conflict`: refetch, merge locally, retry — the server cannot merge what it cannot read. The version variable updates automatically on success."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('workspaceVersion', String(pm.response.json().version));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Publishing",
+      "description": "The one deliberate exception to zero knowledge. The client decrypts a page and uploads plaintext because the user asked for it to be public — so this is also the only surface with quotas and moderation.",
+      "item": [
+        {
+          "name": "POST /publish/assets",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "image/png" }],
+            "body": { "mode": "file", "file": { "src": "" } },
+            "url": {
+              "raw": "{{baseUrl}}/publish/assets",
+              "host": ["{{baseUrl}}"],
+              "path": ["publish", "assets"]
+            },
+            "description": "Uploads one image for a published page. Raw body; `Content-Type` must be png, jpeg, webp, gif, or svg. Max 5 MB. Returns the public URL to list in `assetUrls`."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('assetUrl', pm.response.json().url);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /publish",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"{{slug}}\",\n  \"html\": \"PGgxPnByb2JlPC9oMT4=\",\n  \"blocks\": \"eyJibG9ja3MiOltdfQ==\",\n  \"assetUrls\": [],\n  \"ogTitle\": \"My reading list\",\n  \"ogDescription\": \"Books I loved\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/publish",
+              "host": ["{{baseUrl}}"],
+              "path": ["publish"]
+            },
+            "description": "Publishes a page the client already decrypted and rendered. `html` and `blocks` are base64 **plaintext** (the sample values decode to `<h1>probe</h1>` and `{\"blocks\":[]}`).\n\nRequires a username — the URL is `/@username/slug`. Slug must match `^[a-z0-9][a-z0-9-]{0,63}$`, be unique per user, and not reserved.\n\nLimits: 2 MB html, 2 MB blocks, 25 assets per page, 20 live pages per account. Republishing the same slug replaces it and deletes the old blobs. Returns `503` if no blob store is configured."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /publish",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/publish",
+              "host": ["{{baseUrl}}"],
+              "path": ["publish"]
+            },
+            "description": "The caller's published pages, live and taken down."
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /publish/{slug}",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/publish/{{slug}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["publish", "{{slug}}"]
+            },
+            "description": "Unpublishes: deletes the row and its blobs, so the only readable copy on the server disappears. Returns `204`."
+          },
+          "response": []
+        },
+        {
+          "name": "GET /public/pages/{username}/{slug}",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/public/pages/{{username}}/{{slug}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "pages", "{{username}}", "{{slug}}"]
+            },
+            "description": "Public, cached 60s. The ownspce.com frontend calls this for `/@username/slug`, then streams `htmlUrl` and renders it with the Open Graph tags. `451 taken_down` for moderated pages."
+          },
+          "response": []
+        },
+        {
+          "name": "POST /public/pages/{username}/{slug}/report",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"spam\",\n  \"details\": \"Describe the problem here.\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/public/pages/{{username}}/{{slug}}/report",
+              "host": ["{{baseUrl}}"],
+              "path": ["public", "pages", "{{username}}", "{{slug}}", "report"]
+            },
+            "description": "Public abuse intake — published pages are the only readable content, so this is the whole moderation surface. The reporter's IP is stored one-way hashed. Takedown itself is an operator action that flips `publishes.status`."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
