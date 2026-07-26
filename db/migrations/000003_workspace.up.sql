@@ -1,0 +1,1 @@
+CREATE TABLE workspace_docs (space_id uuid PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE, version bigint NOT NULL DEFAULT 1, key_epoch int NOT NULL CHECK (key_epoch > 0), ciphertext bytea NOT NULL CHECK (octet_length(ciphertext) <= 262184), updated_by_device uuid NOT NULL REFERENCES devices(id) ON DELETE CASCADE, updated_at timestamptz NOT NULL DEFAULT now());
