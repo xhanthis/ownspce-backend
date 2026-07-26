@@ -9,7 +9,7 @@ import (
 	"strconv"
 
 	"github.com/google/uuid"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 // apiError is the single error shape every endpoint returns.

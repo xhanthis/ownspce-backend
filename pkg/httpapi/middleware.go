@@ -11,8 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/ownspce/backend/internal/ratelimit"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/ratelimit"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 type ctxKey int

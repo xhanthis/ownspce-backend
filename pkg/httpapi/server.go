@@ -10,11 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/ownspce/backend/internal/auth"
-	"github.com/ownspce/backend/internal/blob"
-	"github.com/ownspce/backend/internal/config"
-	"github.com/ownspce/backend/internal/ratelimit"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/auth"
+	"github.com/ownspce/backend/pkg/blob"
+	"github.com/ownspce/backend/pkg/config"
+	"github.com/ownspce/backend/pkg/ratelimit"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 // Body size caps. Sealed payloads are bucket-padded, so these are generous

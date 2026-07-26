@@ -46,10 +46,16 @@ func (s *Store) CountPublishes(ctx context.Context, userID uuid.UUID) (int, erro
 // Handles: republish of an existing slug (blobs from the prior version returned
 // for deletion), takedown status reset on republish
 func (s *Store) UpsertPublish(ctx context.Context, userID uuid.UUID, slug, htmlURL, blocksURL string, assetURLs []string, ogTitle, ogDescription string, sizeBytes int64) (*Publish, []string, error) {
+	if assetURLs == nil {
+		assetURLs = []string{}
+	}
 	assets, err := json.Marshal(assetURLs)
 	if err != nil {
 		return nil, nil, err
 	}
+	// Sent as a string: under the PgBouncer-safe exec query mode a []byte is
+	// encoded as bytea, which Postgres will not accept into a jsonb column.
+	assetsJSON := string(assets)
 
 	var (
 		prevHTML   *string
@@ -60,7 +66,7 @@ func (s *Store) UpsertPublish(ctx context.Context, userID uuid.UUID, slug, htmlU
 
 	var p Publish
 	var assetsRaw []byte
-	if err := s.pool.QueryRow(ctx, "INSERT INTO publishes (user_id, slug, html_blob_url, blocks_blob_url, asset_blob_urls, og_title, og_description, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (user_id, slug) DO UPDATE SET html_blob_url = EXCLUDED.html_blob_url, blocks_blob_url = EXCLUDED.blocks_blob_url, asset_blob_urls = EXCLUDED.asset_blob_urls, og_title = EXCLUDED.og_title, og_description = EXCLUDED.og_description, size_bytes = EXCLUDED.size_bytes, status = 'live', updated_at = now() RETURNING id, user_id, slug, html_blob_url, blocks_blob_url, asset_blob_urls, og_title, og_description, size_bytes, status, published_at, updated_at", userID, slug, htmlURL, blocksURL, assets, ogTitle, ogDescription, sizeBytes).Scan(&p.ID, &p.UserID, &p.Slug, &p.HTMLBlobURL, &p.BlocksBlobURL, &assetsRaw, &p.OGTitle, &p.OGDescription, &p.SizeBytes, &p.Status, &p.PublishedAt, &p.UpdatedAt); err != nil {
+	if err := s.pool.QueryRow(ctx, "INSERT INTO publishes (user_id, slug, html_blob_url, blocks_blob_url, asset_blob_urls, og_title, og_description, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (user_id, slug) DO UPDATE SET html_blob_url = EXCLUDED.html_blob_url, blocks_blob_url = EXCLUDED.blocks_blob_url, asset_blob_urls = EXCLUDED.asset_blob_urls, og_title = EXCLUDED.og_title, og_description = EXCLUDED.og_description, size_bytes = EXCLUDED.size_bytes, status = 'live', updated_at = now() RETURNING id, user_id, slug, html_blob_url, blocks_blob_url, asset_blob_urls, og_title, og_description, size_bytes, status, published_at, updated_at", userID, slug, htmlURL, blocksURL, assetsJSON, ogTitle, ogDescription, sizeBytes).Scan(&p.ID, &p.UserID, &p.Slug, &p.HTMLBlobURL, &p.BlocksBlobURL, &assetsRaw, &p.OGTitle, &p.OGDescription, &p.SizeBytes, &p.Status, &p.PublishedAt, &p.UpdatedAt); err != nil {
 		return nil, nil, err
 	}
 	_ = json.Unmarshal(assetsRaw, &p.AssetBlobURLs)

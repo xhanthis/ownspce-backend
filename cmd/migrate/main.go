@@ -15,7 +15,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 
 	migrations "github.com/ownspce/backend/db/migrations"
-	"github.com/ownspce/backend/internal/dotenv"
+	"github.com/ownspce/backend/pkg/dotenv"
 )
 
 func main() {

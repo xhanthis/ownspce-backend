@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ownspce/backend/internal/seal"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/seal"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 var usernamePattern = regexp.MustCompile(`^[a-z0-9_]{3,30}$`)

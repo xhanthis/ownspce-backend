@@ -13,10 +13,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/ownspce/backend/internal/config"
-	"github.com/ownspce/backend/internal/dotenv"
-	"github.com/ownspce/backend/internal/seal"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/config"
+	"github.com/ownspce/backend/pkg/dotenv"
+	"github.com/ownspce/backend/pkg/seal"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 // The integration suite talks to a real Neon database, so it only runs when

@@ -7,8 +7,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/ownspce/backend/internal/seal"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/seal"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 type devicePayload struct {

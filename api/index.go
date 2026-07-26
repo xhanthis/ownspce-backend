@@ -1,14 +1,16 @@
-// Package main is the single Vercel serverless entrypoint. vercel.json rewrites
-// every path here and chi does the routing inside, so warm invocations share one
-// connection pool and one JWKS cache instead of one per route file.
-package main
+// Package handler is the single Vercel serverless entrypoint — the runtime
+// requires this package name and generates the main shim around Handler.
+// vercel.json rewrites every path here and chi does the routing inside, so warm
+// invocations share one connection pool and one JWKS cache instead of one per
+// route file.
+package handler
 
 import (
 	"encoding/json"
 	"log"
 	"net/http"
 
-	"github.com/ownspce/backend/internal/httpapi"
+	"github.com/ownspce/backend/pkg/httpapi"
 )
 
 // Handler is the function Vercel invokes for every request to api.ownspce.com.

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ownspce/backend/internal/blob"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/blob"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 // Publishing limits. This is the only readable content on the server, so it is

@@ -68,10 +68,31 @@ The integration suite creates its own users and deletes them afterwards (deletio
 
 ## Deploy
 
-1. Link the repo to a Vercel project and add `api.ownspce.com` as a domain.
-2. Set env vars from `.env.example` in Vercel (all environments): `DATABASE_URL`, `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `GOOGLE_CLIENT_IDS`, `APPLE_BUNDLE_ID`, `BLOB_READ_WRITE_TOKEN`, `PUBLIC_SITE_ORIGIN`, `ENV=production`.
-3. Create a Vercel Blob store and copy its token in. Without it, snapshot-blob upload and publishing return `503` and everything else works.
-4. Run `go run ./cmd/migrate up` against `DATABASE_URL_UNPOOLED` on deploy (see `.github/workflows/ci.yml`).
+Live now at **https://ownspce-backend.vercel.app/v1** (Vercel project `ownspce-backend`, scope `xhanthis-projects`). `api.ownspce.com` is attached to the project and waiting on one DNS record — see below.
+
+```bash
+vercel --prod                                   # build + deploy
+./scripts/smoke.sh https://api.ownspce.com/v1   # unauthenticated surface
+go run ./cmd/e2e                                # full encrypted sync cycle, needs DATABASE_URL + JWT_PRIVATE_KEY
+```
+
+Production env vars already set: `DATABASE_URL` (pooled Neon), `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `GOOGLE_CLIENT_IDS`, `PUBLIC_SITE_ORIGIN`, `ENV=production`, `BLOB_READ_WRITE_TOKEN` (store `ownspce-blob-api`). `APPLE_BUNDLE_ID` is unset until Apple Sign-In is registered — until then that provider returns `503 unavailable` and Google works normally.
+
+Three deployment facts worth knowing before changing anything:
+
+- `api/index.go` must be **`package handler`**, and the packages it imports must not live under `internal/` — the Vercel Go builder compiles `api/` as a synthetic module, so `internal/` would be unreachable. That is why shared code sits in `pkg/`.
+- Vercel Deployment Protection (SSO) is **off** for this project. It is on by default and makes every route answer `302` to a login page, which would break the API for clients.
+- Migrations are not run by the deploy. Run `go run ./cmd/migrate up` against `DATABASE_URL_UNPOOLED` (see `.github/workflows/ci.yml`).
+
+### DNS for api.ownspce.com
+
+`ownspce.com` uses GoDaddy nameservers (`ns69/ns70.domaincontrol.com`), so the record must be added at the registrar. Replace the existing `A api → 13.202.118.160`:
+
+```
+A      api.ownspce.com    76.76.21.21
+```
+
+Vercel verifies and issues the certificate automatically within a few minutes. Verify with `./scripts/smoke.sh https://api.ownspce.com/v1`.
 
 Public pages are served by the separate **ownspce.com** frontend project at `/@username/slug`; it reads `GET /v1/public/pages/:username/:slug` from this API and streams the HTML blob.
 

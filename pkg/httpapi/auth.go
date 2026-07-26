@@ -4,9 +4,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ownspce/backend/internal/auth"
-	"github.com/ownspce/backend/internal/seal"
-	"github.com/ownspce/backend/internal/store"
+	"github.com/ownspce/backend/pkg/auth"
+	"github.com/ownspce/backend/pkg/seal"
+	"github.com/ownspce/backend/pkg/store"
 )
 
 type deviceRegistration struct {

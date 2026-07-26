@@ -10,8 +10,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/ownspce/backend/internal/dotenv"
-	"github.com/ownspce/backend/internal/httpapi"
+	"github.com/ownspce/backend/pkg/dotenv"
+	"github.com/ownspce/backend/pkg/httpapi"
 )
 
 func main() {
