@@ -17,8 +17,9 @@
         "exec": [
           "// Fresh sample crypto material for every request. Correct lengths, random",
           "// bytes — enough to exercise shape validation, not real ciphertext.",
+          "const crypto = require('crypto-js');",
           "const randomB64 = (byteCount) =>",
-          "  CryptoJS.lib.WordArray.random(byteCount).toString(CryptoJS.enc.Base64);",
+          "  crypto.lib.WordArray.random(byteCount).toString(crypto.enc.Base64);",
           "",
           "const AEAD_OVERHEAD = 40; // 24B nonce + 16B Poly1305 tag",
           "",

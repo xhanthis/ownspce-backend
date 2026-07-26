@@ -59,7 +59,10 @@ func (s *Server) routes() http.Handler {
 	r.Use(securityHeaders)
 	r.Use(s.cors)
 
+	r.Get("/", s.handleRoot)
+
 	r.Route("/v1", func(r chi.Router) {
+		r.Get("/", s.handleRoot)
 		r.Get("/health", s.handleHealth)
 		r.Get("/.well-known/jwks.json", s.handleJWKS)
 
@@ -123,6 +126,24 @@ func (s *Server) routes() http.Handler {
 		writeError(w, apiError{status: http.StatusMethodNotAllowed, Code: "method_not_allowed", Message: "method not allowed for this endpoint"})
 	})
 	return r
+}
+
+// handleRoot answers the bare domain with service metadata instead of a bare
+// 404, so anyone who opens api.ownspce.com in a browser can see what this is and
+// where to go next. Static strings only — nothing about any user.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"service":     "ownspce-api",
+		"description": "Zero-knowledge sync API. The server stores and moves ciphertext only; it cannot read your notes.",
+		"env":         s.cfg.Env,
+		"endpoints": map[string]string{
+			"health": "/v1/health",
+			"jwks":   "/v1/.well-known/jwks.json",
+			"signIn": "POST /v1/auth/session",
+		},
+		"docs": s.cfg.PublicSiteOrigin + "/docs/api",
+	})
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
