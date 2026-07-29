@@ -45,6 +45,7 @@ Public. Verifies a Google or Apple ID token, creates the user on first call, and
 { "accessToken": "eyJ...", "refreshToken": "zxGx...", "expiresIn": 900, "isNewUser": false,
   "user": { "id": "…", "email": "r@x.com", "name": "Rahul", "username": "rahul", "avatarUrl": null,
             "plan": "free", "streakCount": 0, "streakUpdatedOn": null, "theme": "system",
+            "font": "grotesk", "palette": "cream",
             "language": "en", "notifyEmail": true, "notifyPush": true, "recoveryPublicKey": "" },
   "device": { "id": "…", "status": "active" } }
 ```
@@ -69,12 +70,15 @@ Any subset. All Tier 0.
 
 ```json
 { "name": "Rahul", "username": "rahul", "avatarUrl": "https://…", "theme": "dark",
+  "font": "grotesk", "palette": "cream",
   "language": "en", "notifyEmail": true, "notifyPush": false,
   "streakCount": 7, "streakUpdatedOn": "2026-07-26",
   "recoveryPublicKey": "<base64 32B>" }
 ```
 
-Username: `^[a-z0-9_]{3,30}$`, unique, not reserved. `theme` ∈ `system|light|dark`. → the updated `user` object.
+Username: `^[a-z0-9_]{3,30}$`, unique, not reserved. `theme` ∈ `system|light|dark`, `font` ∈ `grotesk|sans|serif`, `palette` ∈ `cream|paper|sand`. → the updated `user` object.
+
+Appearance (`theme`, `font`, `palette`) is deliberately Tier 0: it describes how a page is painted, never what it says, and storing it here is what makes a workspace look the same on every device — including on the sign-in and pending-device screens, which render before any space key has been unwrapped.
 
 ### GET /users/{username}
 Public. → `{"id","username","name","avatarUrl"}`. Never email, plan, or settings.

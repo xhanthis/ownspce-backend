@@ -78,6 +78,8 @@ go run ./cmd/e2e                                # full encrypted sync cycle, nee
 
 Production env vars already set: `DATABASE_URL` (pooled Neon), `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `GOOGLE_CLIENT_IDS`, `PUBLIC_SITE_ORIGIN`, `ENV=production`, `BLOB_READ_WRITE_TOKEN` (store `ownspce-blob-api`). `APPLE_BUNDLE_ID` is unset until Apple Sign-In is registered — until then that provider returns `503 unavailable` and Google works normally.
 
+`ALLOWED_ORIGINS` is the browser CORS allowlist beyond the public site — set it to `https://app.ownspce.com` so the web client can call the API. `PUBLIC_SITE_ORIGIN` is always included automatically, and any `http://localhost` origin is accepted outside production. The web client also needs its Google **Web** OAuth client id added to `GOOGLE_CLIENT_IDS`.
+
 Three deployment facts worth knowing before changing anything:
 
 - `api/index.go` must be **`package handler`**, and the packages it imports must not live under `internal/` — the Vercel Go builder compiles `api/` as a synthetic module, so `internal/` would be unreachable. That is why shared code sits in `pkg/`.
