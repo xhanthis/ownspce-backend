@@ -17,6 +17,7 @@ type Config struct {
 	AppleAudiences   []string
 	BlobToken        string
 	PublicSiteOrigin string
+	AllowedOrigins   []string
 	Env              string
 }
 
@@ -34,6 +35,7 @@ func Load() (*Config, error) {
 		Env:              envOr("ENV", "development"),
 	}
 	c.AppleAudiences = splitList(strings.Join([]string{os.Getenv("APPLE_BUNDLE_ID"), os.Getenv("APPLE_SERVICES_ID")}, ","))
+	c.AllowedOrigins = mergeOrigins(c.PublicSiteOrigin, splitList(os.Getenv("ALLOWED_ORIGINS")))
 
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -76,6 +78,26 @@ func decodeKey(name string, want int) ([]byte, error) {
 		return nil, fmt.Errorf("%s must decode to %d bytes, got %d", name, want, len(b))
 	}
 	return b, nil
+}
+
+// mergeOrigins builds the browser origin allowlist: the public site plus any
+// extra origins from ALLOWED_ORIGINS (the web app at app.ownspce.com, for
+// example), deduplicated and with trailing slashes trimmed so a config typo
+// does not silently fail every preflight.
+// Args: primary (PUBLIC_SITE_ORIGIN), extra (parsed ALLOWED_ORIGINS)
+// Returns: the deduplicated allowlist, primary first.
+func mergeOrigins(primary string, extra []string) []string {
+	seen := make(map[string]bool, len(extra)+1)
+	var out []string
+	for _, origin := range append([]string{primary}, extra...) {
+		normalized := strings.TrimSuffix(strings.TrimSpace(origin), "/")
+		if normalized == "" || seen[normalized] {
+			continue
+		}
+		seen[normalized] = true
+		out = append(out, normalized)
+	}
+	return out
 }
 
 func splitList(raw string) []string {

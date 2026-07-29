@@ -1,0 +1,2 @@
+ALTER TABLE users DROP COLUMN palette;
+ALTER TABLE users DROP COLUMN font;

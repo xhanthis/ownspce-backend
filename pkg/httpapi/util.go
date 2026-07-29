@@ -23,6 +23,18 @@ func isOwnBlobURL(raw string) bool {
 	return strings.HasSuffix(parsed.Host, blobHostSuffix)
 }
 
+// oneOf reports whether value is one of the allowed enum members. Used to reject
+// a value the database CHECK constraint would refuse, so the caller gets a clear
+// 400 rather than a 500 from a constraint violation.
+func oneOf(value string, allowed ...string) bool {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 // detachedContext gives fire-and-forget cleanup work a deadline of its own, since
 // the request context is cancelled the moment the response is written.
 func detachedContext() context.Context {

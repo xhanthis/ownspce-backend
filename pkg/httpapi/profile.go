@@ -28,6 +28,8 @@ type patchMeRequest struct {
 	Username          *string `json:"username"`
 	AvatarURL         *string `json:"avatarUrl"`
 	Theme             *string `json:"theme"`
+	Font              *string `json:"font"`
+	Palette           *string `json:"palette"`
 	Language          *string `json:"language"`
 	NotifyEmail       *bool   `json:"notifyEmail"`
 	NotifyPush        *bool   `json:"notifyPush"`
@@ -58,11 +60,25 @@ func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request) {
 		patch.Username = &username
 	}
 	if req.Theme != nil {
-		if *req.Theme != "system" && *req.Theme != "light" && *req.Theme != "dark" {
+		if !oneOf(*req.Theme, "system", "light", "dark") {
 			writeError(w, badRequest("theme must be system, light or dark"))
 			return
 		}
 		patch.Theme = req.Theme
+	}
+	if req.Font != nil {
+		if !oneOf(*req.Font, "grotesk", "sans", "serif") {
+			writeError(w, badRequest("font must be grotesk, sans or serif"))
+			return
+		}
+		patch.Font = req.Font
+	}
+	if req.Palette != nil {
+		if !oneOf(*req.Palette, "cream", "paper", "sand") {
+			writeError(w, badRequest("palette must be cream, paper or sand"))
+			return
+		}
+		patch.Palette = req.Palette
 	}
 	if req.StreakCount != nil && *req.StreakCount < 0 {
 		writeError(w, badRequest("streakCount must not be negative"))

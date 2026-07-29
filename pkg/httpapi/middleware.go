@@ -181,9 +181,16 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
+// originAllowed matches a browser Origin against the configured allowlist:
+// PUBLIC_SITE_ORIGIN plus anything in ALLOWED_ORIGINS, which is how the web app
+// at app.ownspce.com is permitted alongside the marketing site. Outside
+// production, any localhost origin is allowed so cmd/dev works with a local
+// Vite server.
 func (s *Server) originAllowed(origin string) bool {
-	if origin == s.cfg.PublicSiteOrigin {
-		return true
+	for _, allowed := range s.cfg.AllowedOrigins {
+		if origin == allowed {
+			return true
+		}
 	}
 	if !s.cfg.IsProduction() && strings.HasPrefix(origin, "http://localhost") {
 		return true

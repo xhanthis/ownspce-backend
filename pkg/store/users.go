@@ -22,17 +22,19 @@ type User struct {
 	StreakCount       int
 	StreakUpdatedOn   *time.Time
 	Theme             string
+	Font              string
+	Palette           string
 	Language          string
 	NotifyEmail       bool
 	NotifyPush        bool
 	CreatedAt         time.Time
 }
 
-const userColumns = `id, email, name, username, avatar_url, plan, recovery_public_key, streak_count, streak_updated_on, theme, language, notify_email, notify_push, created_at`
+const userColumns = `id, email, name, username, avatar_url, plan, recovery_public_key, streak_count, streak_updated_on, theme, font, palette, language, notify_email, notify_push, created_at`
 
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
-	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Username, &u.AvatarURL, &u.Plan, &u.RecoveryPublicKey, &u.StreakCount, &u.StreakUpdatedOn, &u.Theme, &u.Language, &u.NotifyEmail, &u.NotifyPush, &u.CreatedAt); err != nil {
+	if err := row.Scan(&u.ID, &u.Email, &u.Name, &u.Username, &u.AvatarURL, &u.Plan, &u.RecoveryPublicKey, &u.StreakCount, &u.StreakUpdatedOn, &u.Theme, &u.Font, &u.Palette, &u.Language, &u.NotifyEmail, &u.NotifyPush, &u.CreatedAt); err != nil {
 		if noRows(err) {
 			return nil, ErrNotFound
 		}
@@ -97,6 +99,8 @@ type ProfilePatch struct {
 	Username          *string
 	AvatarURL         *string
 	Theme             *string
+	Font              *string
+	Palette           *string
 	Language          *string
 	NotifyEmail       *bool
 	NotifyPush        *bool
@@ -120,7 +124,7 @@ func (s *Store) UpdateProfile(ctx context.Context, id uuid.UUID, patch ProfilePa
 		}
 	}
 
-	u, err := scanUser(s.pool.QueryRow(ctx, "UPDATE users SET name = COALESCE($2, name), username = COALESCE($3, username), avatar_url = COALESCE($4, avatar_url), theme = COALESCE($5, theme), language = COALESCE($6, language), notify_email = COALESCE($7, notify_email), notify_push = COALESCE($8, notify_push), streak_count = COALESCE($9, streak_count), streak_updated_on = COALESCE($10, streak_updated_on), recovery_public_key = COALESCE($11, recovery_public_key), updated_at = now() WHERE id = $1 RETURNING "+userColumns, id, patch.Name, patch.Username, patch.AvatarURL, patch.Theme, patch.Language, patch.NotifyEmail, patch.NotifyPush, patch.StreakCount, patch.StreakUpdatedOn, nullIfEmptyBytes(patch.RecoveryPublicKey)))
+	u, err := scanUser(s.pool.QueryRow(ctx, "UPDATE users SET name = COALESCE($2, name), username = COALESCE($3, username), avatar_url = COALESCE($4, avatar_url), theme = COALESCE($5, theme), font = COALESCE($6, font), palette = COALESCE($7, palette), language = COALESCE($8, language), notify_email = COALESCE($9, notify_email), notify_push = COALESCE($10, notify_push), streak_count = COALESCE($11, streak_count), streak_updated_on = COALESCE($12, streak_updated_on), recovery_public_key = COALESCE($13, recovery_public_key), updated_at = now() WHERE id = $1 RETURNING "+userColumns, id, patch.Name, patch.Username, patch.AvatarURL, patch.Theme, patch.Font, patch.Palette, patch.Language, patch.NotifyEmail, patch.NotifyPush, patch.StreakCount, patch.StreakUpdatedOn, nullIfEmptyBytes(patch.RecoveryPublicKey)))
 	if err != nil && isUniqueViolation(err, "users_username_key") {
 		return nil, ErrConflict
 	}
