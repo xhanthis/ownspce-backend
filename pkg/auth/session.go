@@ -12,9 +12,13 @@ import (
 )
 
 const (
-	Issuer         = "https://api.ownspce.com"
-	Audience       = "ownspce"
-	AccessTokenTTL = 15 * time.Minute
+	Issuer   = "https://api.ownspce.com"
+	Audience = "ownspce"
+	// AccessTokenTTL is deliberately not the revocation window: the middleware
+	// re-reads the device row on every request, so a revoked device dies at once.
+	// Its real job is to bound how often a client rotates its refresh token, and
+	// every rotation is a chance for a dropped response to cost the user a login.
+	AccessTokenTTL = time.Hour
 )
 
 var ErrInvalidAccessToken = errors.New("auth: invalid access token")

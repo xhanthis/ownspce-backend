@@ -18,8 +18,34 @@ var (
 	ErrTokenExpired = errors.New("store: refresh token expired")
 )
 
-// RefreshTTL is the sliding window a refresh-token family stays alive.
-const RefreshTTL = 30 * 24 * time.Hour
+const (
+	// RefreshTTLWeb is the sliding window a browser session stays alive. Short,
+	// because a logged-in browser profile is the easiest session to walk up to
+	// and reuse, and re-authenticating there costs one click.
+	RefreshTTLWeb = 7 * 24 * time.Hour
+	// RefreshTTLApp is the window for an installed app. Its refresh token lives
+	// in the Keychain / Keystore behind the device lock, so expiring the session
+	// monthly buys almost nothing and costs the user a sign-in they never asked
+	// for. Revocation stays instant either way: the auth middleware re-reads the
+	// device row on every request.
+	RefreshTTLApp = 365 * 24 * time.Hour
+	// refreshReuseGrace forgives a token replayed within this window. When a
+	// rotation response is lost in flight the server has already spent the token
+	// the client still holds; without grace that single dropped packet revokes
+	// the family and forces a re-login, which on a phone happens often.
+	refreshReuseGrace = 60 * time.Second
+)
+
+// refreshTTLFor picks a session length from the device's platform.
+// Args: platform (as registered by the client)
+// Returns: the sliding window for that platform, defaulting to the app window
+// for anything that is not the web client
+func refreshTTLFor(platform string) time.Duration {
+	if platform == DevicePlatformWeb {
+		return RefreshTTLWeb
+	}
+	return RefreshTTLApp
+}
 
 // RefreshToken is the opaque credential handed to a device. Only its SHA-256 is
 // stored, so a database leak yields no usable tokens.
@@ -31,9 +57,10 @@ type RefreshToken struct {
 
 // IssueRefreshToken mints a new refresh token, starting a new family when
 // familyID is nil.
-// Args: ctx, userID, deviceID, familyID (nil to start a family)
+// Args: ctx, userID, deviceID, platform (sets the session length), familyID (nil
+// to start a family)
 // Returns: token with plaintext (returned exactly once), error
-func (s *Store) IssueRefreshToken(ctx context.Context, userID, deviceID uuid.UUID, familyID *uuid.UUID) (*RefreshToken, error) {
+func (s *Store) IssueRefreshToken(ctx context.Context, userID, deviceID uuid.UUID, platform string, familyID *uuid.UUID) (*RefreshToken, error) {
 	plaintext, hash, err := newTokenSecret()
 	if err != nil {
 		return nil, err
@@ -42,7 +69,7 @@ func (s *Store) IssueRefreshToken(ctx context.Context, userID, deviceID uuid.UUI
 	if familyID != nil {
 		family = *familyID
 	}
-	expires := time.Now().Add(RefreshTTL)
+	expires := time.Now().Add(refreshTTLFor(platform))
 
 	if _, err := s.pool.Exec(ctx, "INSERT INTO refresh_tokens (user_id, device_id, token_hash, family_id, expires_at) VALUES ($1, $2, $3, $4, $5)", userID, deviceID, hash, family, expires); err != nil {
 		return nil, err
@@ -60,9 +87,16 @@ type RotatedToken struct {
 
 // RotateRefreshToken exchanges a refresh token for its successor in the same
 // family, detecting replay of an already-used token.
+//
+// A replay inside refreshReuseGrace is treated as an honest retry rather than
+// theft: a client whose rotation response was lost holds a token the server has
+// already spent, and it has no way to tell that from a network error. Only a
+// replay after the grace window looks like a stolen token, and that still kills
+// the family.
+//
 // Args: ctx, plaintext (token presented by the client)
 // Returns: rotated token + identity, error
-// Handles: unknown token (ErrNotFound), replay of a spent or revoked token
+// Handles: unknown token (ErrNotFound), replay of a long-spent or revoked token
 // (ErrTokenReuse — the whole family is revoked, forcing re-login), expiry
 // (ErrTokenExpired), revoked device (ErrForbidden)
 func (s *Store) RotateRefreshToken(ctx context.Context, plaintext string) (*RotatedToken, error) {
@@ -74,23 +108,17 @@ func (s *Store) RotateRefreshToken(ctx context.Context, plaintext string) (*Rota
 		deviceID  uuid.UUID
 		familyID  uuid.UUID
 		expiresAt time.Time
-		usedAt    *time.Time
-		revokedAt *time.Time
 		status    string
+		platform  string
 	)
-	row := s.pool.QueryRow(ctx, "SELECT t.id, t.user_id, t.device_id, t.family_id, t.expires_at, t.used_at, t.revoked_at, d.status FROM refresh_tokens t JOIN devices d ON d.id = t.device_id WHERE t.token_hash = $1", hash)
-	if err := row.Scan(&id, &userID, &deviceID, &familyID, &expiresAt, &usedAt, &revokedAt, &status); err != nil {
+	row := s.pool.QueryRow(ctx, "SELECT t.id, t.user_id, t.device_id, t.family_id, t.expires_at, d.status, d.platform FROM refresh_tokens t JOIN devices d ON d.id = t.device_id WHERE t.token_hash = $1", hash)
+	if err := row.Scan(&id, &userID, &deviceID, &familyID, &expiresAt, &status, &platform); err != nil {
 		if noRows(err) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 
-	// Revocation runs outside any transaction that then fails: rolling it back with
-	// the error would leave a detected-stolen token family alive.
-	if usedAt != nil || revokedAt != nil {
-		return nil, s.revokeFamily(ctx, familyID)
-	}
 	if time.Now().After(expiresAt) {
 		return nil, ErrTokenExpired
 	}
@@ -102,18 +130,20 @@ func (s *Store) RotateRefreshToken(ctx context.Context, plaintext string) (*Rota
 	if err != nil {
 		return nil, err
 	}
-	expires := time.Now().Add(RefreshTTL)
+	expires := time.Now().Add(refreshTTLFor(platform))
 
-	raced := false
+	reused := false
 	err = s.tx(ctx, func(tx pgx.Tx) error {
-		// Claiming the token conditionally is what makes concurrent rotation safe:
-		// exactly one caller can flip used_at, and the loser is treated as a replay.
-		tag, err := tx.Exec(ctx, "UPDATE refresh_tokens SET used_at = now() WHERE id = $1 AND used_at IS NULL AND revoked_at IS NULL", id)
+		// One conditional claim decides everything: it stamps used_at on the first
+		// rotation, still succeeds for a retry inside the grace window, and matches
+		// nothing once the token is revoked or long spent. COALESCE keeps used_at
+		// anchored to the first use so replaying cannot slide the window forward.
+		tag, err := tx.Exec(ctx, "UPDATE refresh_tokens SET used_at = COALESCE(used_at, now()) WHERE id = $1 AND revoked_at IS NULL AND (used_at IS NULL OR used_at > now() - make_interval(secs => $2))", id, refreshReuseGrace.Seconds())
 		if err != nil {
 			return err
 		}
 		if tag.RowsAffected() == 0 {
-			raced = true
+			reused = true
 			return nil
 		}
 		if _, err := tx.Exec(ctx, "INSERT INTO refresh_tokens (user_id, device_id, token_hash, family_id, expires_at) VALUES ($1, $2, $3, $4, $5)", userID, deviceID, nextHash, familyID, expires); err != nil {
@@ -125,7 +155,9 @@ func (s *Store) RotateRefreshToken(ctx context.Context, plaintext string) (*Rota
 	if err != nil {
 		return nil, err
 	}
-	if raced {
+	// Revocation runs outside the transaction above: rolling it back with the
+	// error would leave a detected-stolen token family alive.
+	if reused {
 		return nil, s.revokeFamily(ctx, familyID)
 	}
 

@@ -31,6 +31,8 @@ type userPayload struct {
 	StreakCount       int     `json:"streakCount"`
 	StreakUpdatedOn   *string `json:"streakUpdatedOn"`
 	Theme             string  `json:"theme"`
+	Font              string  `json:"font"`
+	Palette           string  `json:"palette"`
 	Language          string  `json:"language"`
 	NotifyEmail       bool    `json:"notifyEmail"`
 	NotifyPush        bool    `json:"notifyPush"`
@@ -43,7 +45,7 @@ func toUserPayload(u *store.User) userPayload {
 		formatted := u.StreakUpdatedOn.Format("2006-01-02")
 		streakDate = &formatted
 	}
-	return userPayload{ID: u.ID.String(), Email: u.Email, Name: u.Name, Username: u.Username, AvatarURL: u.AvatarURL, Plan: u.Plan, StreakCount: u.StreakCount, StreakUpdatedOn: streakDate, Theme: u.Theme, Language: u.Language, NotifyEmail: u.NotifyEmail, NotifyPush: u.NotifyPush, RecoveryPublicKey: encodeB64(u.RecoveryPublicKey)}
+	return userPayload{ID: u.ID.String(), Email: u.Email, Name: u.Name, Username: u.Username, AvatarURL: u.AvatarURL, Plan: u.Plan, StreakCount: u.StreakCount, StreakUpdatedOn: streakDate, Theme: u.Theme, Font: u.Font, Palette: u.Palette, Language: u.Language, NotifyEmail: u.NotifyEmail, NotifyPush: u.NotifyPush, RecoveryPublicKey: encodeB64(u.RecoveryPublicKey)}
 }
 
 type sessionResponse struct {
@@ -115,7 +117,7 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	refresh, err := s.store.IssueRefreshToken(r.Context(), user.ID, device.ID, nil)
+	refresh, err := s.store.IssueRefreshToken(r.Context(), user.ID, device.ID, device.Platform, nil)
 	if err != nil {
 		writeError(w, err)
 		return

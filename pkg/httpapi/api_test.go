@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ownspce/backend/pkg/config"
@@ -206,7 +207,7 @@ func TestProfileUpdateAndUsernameRules(t *testing.T) {
 	username := "u" + uuid.NewString()[:8]
 
 	// Act
-	rec := h.do(http.MethodPatch, "/v1/me", first, map[string]any{"username": username, "theme": "dark"})
+	rec := h.do(http.MethodPatch, "/v1/me", first, map[string]any{"username": username, "theme": "dark", "font": "serif", "palette": "sand"})
 
 	// Assert
 	requireStatus(t, rec, http.StatusOK)
@@ -214,6 +215,15 @@ func TestProfileUpdateAndUsernameRules(t *testing.T) {
 	if body["username"] != username || body["theme"] != "dark" {
 		t.Fatalf("profile not updated: %s", rec.Body.String())
 	}
+	if body["font"] != "serif" || body["palette"] != "sand" {
+		t.Fatalf("appearance not updated: %s", rec.Body.String())
+	}
+
+	badFont := h.do(http.MethodPatch, "/v1/me", first, map[string]any{"font": "comic"})
+	requireStatus(t, badFont, http.StatusBadRequest)
+
+	badPalette := h.do(http.MethodPatch, "/v1/me", first, map[string]any{"palette": "neon"})
+	requireStatus(t, badPalette, http.StatusBadRequest)
 
 	taken := h.do(http.MethodPatch, "/v1/me", second, map[string]any{"username": username})
 	requireStatus(t, taken, http.StatusConflict)
@@ -596,7 +606,7 @@ func TestRefreshRotationDetectsReuse(t *testing.T) {
 	// Arrange
 	h := newHarness(t)
 	a := h.signUp("laptop")
-	issued, err := h.store.IssueRefreshToken(context.Background(), a.UserID, a.DeviceID, nil)
+	issued, err := h.store.IssueRefreshToken(context.Background(), a.UserID, a.DeviceID, "web", nil)
 	if err != nil {
 		t.Fatalf("issue refresh token: %v", err)
 	}
@@ -606,6 +616,11 @@ func TestRefreshRotationDetectsReuse(t *testing.T) {
 	requireStatus(t, first, http.StatusOK)
 	rotated := decodeBody(t, first)["refreshToken"].(string)
 
+	// Age the spent token past the retry grace so the replay reads as theft
+	// rather than as a client that never saw the response.
+	if _, err := h.store.Pool().Exec(context.Background(), "UPDATE refresh_tokens SET used_at = now() - interval '1 hour' WHERE family_id = $1 AND used_at IS NOT NULL", issued.FamilyID); err != nil {
+		t.Fatalf("age spent token: %v", err)
+	}
 	replay := h.do(http.MethodPost, "/v1/auth/refresh", nil, map[string]any{"refreshToken": issued.Plaintext})
 
 	// Assert: replay is detected and the whole family dies with it
@@ -615,6 +630,53 @@ func TestRefreshRotationDetectsReuse(t *testing.T) {
 	}
 	afterFamilyRevoked := h.do(http.MethodPost, "/v1/auth/refresh", nil, map[string]any{"refreshToken": rotated})
 	requireStatus(t, afterFamilyRevoked, http.StatusUnauthorized)
+}
+
+func TestRefreshRotationForgivesRetryWithinGrace(t *testing.T) {
+	// Arrange: a client whose rotation response was lost still holds the token
+	// the server has already spent, and retries with it.
+	h := newHarness(t)
+	a := h.signUp("phone")
+	issued, err := h.store.IssueRefreshToken(context.Background(), a.UserID, a.DeviceID, "ios", nil)
+	if err != nil {
+		t.Fatalf("issue refresh token: %v", err)
+	}
+	requireStatus(t, h.do(http.MethodPost, "/v1/auth/refresh", nil, map[string]any{"refreshToken": issued.Plaintext}), http.StatusOK)
+
+	// Act
+	retry := h.do(http.MethodPost, "/v1/auth/refresh", nil, map[string]any{"refreshToken": issued.Plaintext})
+
+	// Assert: the session survives and the retry gets a usable token
+	requireStatus(t, retry, http.StatusOK)
+	next, _ := decodeBody(t, retry)["refreshToken"].(string)
+	if next == "" {
+		t.Fatal("retry within grace returned no refresh token")
+	}
+	requireStatus(t, h.do(http.MethodPost, "/v1/auth/refresh", nil, map[string]any{"refreshToken": next}), http.StatusOK)
+}
+
+func TestRefreshTTLDependsOnPlatform(t *testing.T) {
+	// Arrange
+	h := newHarness(t)
+	a := h.signUp("laptop")
+
+	// Act
+	web, err := h.store.IssueRefreshToken(context.Background(), a.UserID, a.DeviceID, "web", nil)
+	if err != nil {
+		t.Fatalf("issue web token: %v", err)
+	}
+	app, err := h.store.IssueRefreshToken(context.Background(), a.UserID, a.DeviceID, "ios", nil)
+	if err != nil {
+		t.Fatalf("issue app token: %v", err)
+	}
+
+	// Assert
+	if got := time.Until(web.ExpiresAt); got > store.RefreshTTLWeb || got < store.RefreshTTLWeb-time.Minute {
+		t.Errorf("web ttl = %v, want ~%v", got, store.RefreshTTLWeb)
+	}
+	if got := time.Until(app.ExpiresAt); got > store.RefreshTTLApp || got < store.RefreshTTLApp-time.Minute {
+		t.Errorf("app ttl = %v, want ~%v", got, store.RefreshTTLApp)
+	}
 }
 
 func TestUnauthenticatedRequestsAreRejected(t *testing.T) {

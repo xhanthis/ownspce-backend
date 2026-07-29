@@ -13,6 +13,10 @@ const (
 	DeviceStatusPending = "pending"
 	DeviceStatusActive  = "active"
 	DeviceStatusRevoked = "revoked"
+
+	// DevicePlatformWeb is the only platform that gets the short session window;
+	// see refreshTTLFor.
+	DevicePlatformWeb = "web"
 )
 
 // Device holds a device's Tier 0 record. PublicKey is an X25519 public key; the
