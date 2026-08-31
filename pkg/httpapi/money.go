@@ -65,6 +65,7 @@ var colorPattern = regexp.MustCompile(`^#[0-9A-Fa-f]{6}$`)
 func (s *Server) moneyRoutes(r chi.Router) {
 	r.Route("/money", func(r chi.Router) {
 		r.With(s.rateLimit(ratelimit.MoneyRead, subjectUser)).Get("/households", s.handleListHouseholds)
+		r.With(s.rateLimit(ratelimit.MoneyWrite, subjectUser)).Post("/households", s.handleCreateHousehold)
 		r.With(s.rateLimit(ratelimit.MoneyWrite, subjectUser)).Post("/invites/accept", s.handleAcceptInvite)
 
 		r.Route("/households/{spaceID}", func(r chi.Router) {
@@ -284,6 +285,26 @@ func (s *Server) handleListHouseholds(w http.ResponseWriter, r *http.Request) {
 		out = append(out, map[string]any{"spaceId": h.SpaceID, "role": h.Role, "memberCount": h.MemberCount, "currency": h.Settings.Currency, "locale": h.Settings.Locale, "sharedByDefault": h.Settings.SharedByDefault, "approvalThreshold": money(h.Settings.ApprovalThresholdMinor, h.Settings.Currency), "monthlyCloseDay": h.Settings.MonthlyCloseDay})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"households": out})
+}
+
+// handleCreateHousehold starts a brand-new household in one call.
+//
+// It exists so a first-time web session can get to a working ledger without
+// going through space creation's key-wrapping ceremony, which protects content
+// this space will never hold. Enabling money on a space the user already has
+// remains available at POST /money/households/{spaceID}/enable.
+func (s *Server) handleCreateHousehold(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := s.store.CreateMoneyHousehold(r.Context(), callerFrom(r.Context()).UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	settings, err := s.store.MoneySettingsFor(r.Context(), spaceID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"spaceId": spaceID, "role": store.RoleOwner, "memberCount": 1, "currency": settings.Currency, "locale": settings.Locale, "sharedByDefault": settings.SharedByDefault, "approvalThreshold": money(settings.ApprovalThresholdMinor, settings.Currency), "monthlyCloseDay": settings.MonthlyCloseDay})
 }
 
 // handleEnableMoney turns an existing space into a money household.

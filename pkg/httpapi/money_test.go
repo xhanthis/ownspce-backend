@@ -577,3 +577,31 @@ func TestSearchAndScopeNarrowTheFeed(t *testing.T) {
 	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today()+"&scope=everyone", owner, nil)
 	requireStatus(t, rec, http.StatusBadRequest)
 }
+
+func TestCreateHouseholdGivesAWorkingLedgerInOneCall(t *testing.T) {
+	h := newHarness(t)
+	a := h.signUp("owner")
+
+	rec := h.do(http.MethodPost, "/v1/money/households", a, nil)
+	requireStatus(t, rec, http.StatusCreated)
+	body := decodeBody(t, rec)
+	spaceID := body["spaceId"].(string)
+	if body["role"] != "owner" {
+		t.Errorf("role = %v, want owner", body["role"])
+	}
+
+	// Seeded and immediately writable, with no key ceremony in between.
+	categoryID := h.firstCategory(a, spaceID, "expense")
+	entry := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 31000, "occurredOn": today()}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, entry), http.StatusCreated)
+
+	rec = h.do(http.MethodGet, "/v1/money/households", a, nil)
+	requireStatus(t, rec, http.StatusOK)
+	households := decodeBody(t, rec)["households"].([]any)
+	if len(households) != 1 {
+		t.Fatalf("listed %d households, want 1", len(households))
+	}
+	if got := households[0].(map[string]any)["memberCount"].(float64); got != 1 {
+		t.Errorf("memberCount = %v, want 1", got)
+	}
+}

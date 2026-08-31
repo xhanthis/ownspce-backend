@@ -43,6 +43,11 @@ Every money-enabled household the caller belongs to.
                     "monthlyCloseDay": 1 } ] }
 ```
 
+### POST /money/households
+Starts a brand-new household in one call: a space, the caller as owner, money enabled, and the seventeen seed categories. → `201` with the same shape as a list row.
+
+It exists so a first-time web session reaches a working ledger without going through space creation's key-wrapping ceremony, which protects content this space will never hold. A notes client listing this space sees `wrappedKey: null` — the state it already handles for a space whose key has not been granted yet.
+
 ### POST /money/households/{spaceID}/enable
 Owner only. Turns an existing space into a household and seeds the seventeen default categories in the same transaction, so the first entry can be logged without setting anything up. Enabling twice returns the existing settings unchanged — it never resets them or duplicates the seed. → `201`.
 

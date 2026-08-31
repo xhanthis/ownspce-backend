@@ -228,6 +228,44 @@ func (s *Store) EnableMoney(ctx context.Context, spaceID uuid.UUID) (*MoneySetti
 	return settings, nil
 }
 
+// CreateMoneyHousehold creates a space that exists only to hold a ledger.
+//
+// The encrypted product's own space creation demands a set of space keys wrapped
+// to the caller's devices, and refuses to create a space nobody can decrypt.
+// A money household has nothing to decrypt: its rows are readable by design. So
+// it is created here without keys, which is also what lets a brand-new web
+// session start a household without first performing a device-approval dance
+// that protects data this space will never hold.
+//
+// A notes client listing this space sees wrappedKey: null — the state it already
+// handles for a space whose key has not been granted yet.
+// Args: ctx, ownerID
+// Returns: the new space id, error
+func (s *Store) CreateMoneyHousehold(ctx context.Context, ownerID uuid.UUID) (uuid.UUID, error) {
+	var spaceID uuid.UUID
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "INSERT INTO spaces (owner_id) VALUES ($1) RETURNING id", ownerID).Scan(&spaceID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO space_members (space_id, user_id, role, invited_by) VALUES ($1, $2, 'owner', $2)", spaceID, ownerID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO money_settings (space_id) VALUES ($1)", spaceID); err != nil {
+			return err
+		}
+		for i, c := range seedCategories {
+			if _, err := tx.Exec(ctx, "INSERT INTO money_categories (space_id, name, emoji, color, kind, sort_order) VALUES ($1, $2, $3, $4, $5, $6)", spaceID, c.Name, c.Emoji, c.Color, c.Kind, i); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return spaceID, nil
+}
+
 // MoneySettingsFor reads one household's configuration.
 // Args: ctx, spaceID
 // Returns: settings, ErrNotFound when money is not enabled on the space
