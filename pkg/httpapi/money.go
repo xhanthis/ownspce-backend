@@ -993,7 +993,7 @@ func (s *Server) handleCreateBill(w http.ResponseWriter, r *http.Request) {
 
 	created, err := s.store.CreateMoneyBill(r.Context(), bill)
 	if err != nil {
-		writeError(w, err)
+		writeError(w, storeError(err, "no such category or account", "", "", "cross_household", "that category or account belongs to another household"))
 		return
 	}
 	settings, err := s.store.MoneySettingsFor(r.Context(), spaceIDFrom(r))

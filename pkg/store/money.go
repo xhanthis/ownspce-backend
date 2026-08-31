@@ -304,6 +304,39 @@ func (s *Store) ListMoneyHouseholds(ctx context.Context, userID uuid.UUID) ([]Mo
 	return out, rows.Err()
 }
 
+// assertInSpace checks that a row a caller is pointing at belongs to the
+// household they are writing into.
+//
+// A foreign key alone only proves the row exists somewhere. Without this, a
+// member of one household could attach another household's category or account
+// to their own entry, and every figure derived from it would silently cross a
+// tenant boundary. Every write that accepts an id from the client goes through
+// here.
+// Args: ctx, table (money_categories or money_accounts), id, spaceID
+// Returns: nil when it belongs here, ErrNotFound when the row is absent,
+// ErrForbidden when it belongs to another household
+func (s *Store) assertInSpace(ctx context.Context, table string, id, spaceID uuid.UUID) error {
+	var owner uuid.UUID
+	var err error
+	switch table {
+	case "money_categories":
+		err = s.pool.QueryRow(ctx, "SELECT space_id FROM money_categories WHERE id = $1", id).Scan(&owner)
+	case "money_accounts":
+		err = s.pool.QueryRow(ctx, "SELECT space_id FROM money_accounts WHERE id = $1", id).Scan(&owner)
+	default:
+		return fmt.Errorf("assertInSpace: unsupported table %q", table)
+	}
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ErrNotFound
+	case err != nil:
+		return err
+	case owner != spaceID:
+		return ErrForbidden
+	}
+	return nil
+}
+
 // MoneyRole resolves the caller's role on a money-enabled household.
 //
 // Membership and the money-enabled flag are checked in one statement rather than
@@ -480,27 +513,12 @@ type TransactionFilter struct {
 // Handles: a category belonging to another household, rejected as ErrForbidden
 // rather than silently linking across households
 func (s *Store) CreateMoneyTransaction(ctx context.Context, t MoneyTransaction) (*MoneyTransaction, error) {
-	var categorySpace uuid.UUID
-	err := s.pool.QueryRow(ctx, "SELECT space_id FROM money_categories WHERE id = $1", t.CategoryID).Scan(&categorySpace)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return nil, ErrNotFound
-	case err != nil:
+	if err := s.assertInSpace(ctx, "money_categories", t.CategoryID, t.SpaceID); err != nil {
 		return nil, err
-	case categorySpace != t.SpaceID:
-		return nil, ErrForbidden
 	}
-
 	if t.AccountID != nil {
-		var accountSpace uuid.UUID
-		err := s.pool.QueryRow(ctx, "SELECT space_id FROM money_accounts WHERE id = $1", *t.AccountID).Scan(&accountSpace)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			return nil, ErrNotFound
-		case err != nil:
+		if err := s.assertInSpace(ctx, "money_accounts", *t.AccountID, t.SpaceID); err != nil {
 			return nil, err
-		case accountSpace != t.SpaceID:
-			return nil, ErrForbidden
 		}
 	}
 
@@ -618,15 +636,13 @@ func decodeTransactionCursor(raw string) (time.Time, uuid.UUID, error) {
 // Returns: the updated transaction, ErrNotFound when it is missing or deleted
 func (s *Store) UpdateMoneyTransaction(ctx context.Context, spaceID, transactionID uuid.UUID, categoryID, accountID *uuid.UUID, amountMinor *int64, occurredOn *time.Time, note *string, isShared *bool, paidBy *uuid.UUID) (*MoneyTransaction, error) {
 	if categoryID != nil {
-		var categorySpace uuid.UUID
-		err := s.pool.QueryRow(ctx, "SELECT space_id FROM money_categories WHERE id = $1", *categoryID).Scan(&categorySpace)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			return nil, ErrNotFound
-		case err != nil:
+		if err := s.assertInSpace(ctx, "money_categories", *categoryID, spaceID); err != nil {
 			return nil, err
-		case categorySpace != spaceID:
-			return nil, ErrForbidden
+		}
+	}
+	if accountID != nil {
+		if err := s.assertInSpace(ctx, "money_accounts", *accountID, spaceID); err != nil {
+			return nil, err
 		}
 	}
 	return scanMoneyTransaction(s.pool.QueryRow(ctx, "UPDATE money_transactions SET category_id = COALESCE($3, category_id), account_id = COALESCE($4, account_id), amount_minor = COALESCE($5, amount_minor), occurred_on = COALESCE($6, occurred_on), note = COALESCE($7, note), is_shared = COALESCE($8, is_shared), paid_by = COALESCE($9, paid_by), updated_at = now() WHERE space_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING "+moneyTransactionColumns, spaceID, transactionID, categoryID, accountID, amountMinor, occurredOn, note, isShared, paidBy))
@@ -790,15 +806,8 @@ func (s *Store) ListMoneyBudgets(ctx context.Context, spaceID uuid.UUID, from, t
 // Returns: the stored budget, ErrForbidden when the category belongs to another
 // household, ErrNotFound when it does not exist
 func (s *Store) UpsertMoneyBudget(ctx context.Context, spaceID, categoryID uuid.UUID, limitMinor int64) (*MoneyBudget, error) {
-	var categorySpace uuid.UUID
-	err := s.pool.QueryRow(ctx, "SELECT space_id FROM money_categories WHERE id = $1", categoryID).Scan(&categorySpace)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows):
-		return nil, ErrNotFound
-	case err != nil:
+	if err := s.assertInSpace(ctx, "money_categories", categoryID, spaceID); err != nil {
 		return nil, err
-	case categorySpace != spaceID:
-		return nil, ErrForbidden
 	}
 
 	var b MoneyBudget
@@ -859,7 +868,19 @@ func (s *Store) ListMoneyBills(ctx context.Context, spaceID uuid.UUID) ([]MoneyB
 // CreateMoneyBill adds a recurring charge.
 // Args: ctx, bill (SpaceID, Name, AmountMinor and DayOfMonth required)
 // Returns: the created bill, error
+// Handles: a category or account belonging to another household, rejected as
+// ErrForbidden rather than linked across a tenant boundary
 func (s *Store) CreateMoneyBill(ctx context.Context, b MoneyBill) (*MoneyBill, error) {
+	if b.CategoryID != nil {
+		if err := s.assertInSpace(ctx, "money_categories", *b.CategoryID, b.SpaceID); err != nil {
+			return nil, err
+		}
+	}
+	if b.AccountID != nil {
+		if err := s.assertInSpace(ctx, "money_accounts", *b.AccountID, b.SpaceID); err != nil {
+			return nil, err
+		}
+	}
 	return scanMoneyBill(s.pool.QueryRow(ctx, "INSERT INTO money_bills (space_id, name, emoji, category_id, account_id, amount_minor, day_of_month, auto_log, is_shared, paid_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING "+moneyBillColumns, b.SpaceID, b.Name, b.Emoji, b.CategoryID, b.AccountID, b.AmountMinor, b.DayOfMonth, b.AutoLog, b.IsShared, b.PaidBy))
 }
 

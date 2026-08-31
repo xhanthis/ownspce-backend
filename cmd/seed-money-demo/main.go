@@ -14,6 +14,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -111,6 +112,7 @@ var holdings = []holding{
 
 func main() {
 	clean := flag.Bool("clean", false, "delete every demo user and everything cascading from them")
+	allowRemote := flag.Bool("allow-remote", false, "permit running against a database that is not local; required for any non-localhost DSN")
 	origin := flag.String("origin", "http://localhost:5003", "web origin the printed session is for")
 	flag.Parse()
 
@@ -121,8 +123,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	// ENV alone is not a safe guard: it describes the local process, not the
+	// database the DSN points at, so ENV=development with a production
+	// DATABASE_URL would happily write demo households into real data. What
+	// matters is which database this is actually connected to.
 	if cfg.IsProduction() {
-		log.Fatal("refusing to seed demo data with ENV=production")
+		log.Fatal("refusing to run with ENV=production")
+	}
+	if !isLocalDSN(cfg.DatabaseURL) && !*allowRemote {
+		log.Fatal("DATABASE_URL does not point at localhost; re-run with -allow-remote if you really mean to touch a remote database")
 	}
 
 	st, err := store.Open(ctx, cfg.DatabaseURL)
@@ -265,6 +274,20 @@ func main() {
 	fmt.Printf("Paste into the console at %s to sign this browser in:\n\n", *origin)
 	fmt.Printf("localStorage.setItem('ownspce.money.session.v1', %s); location.reload()\n", strconv.Quote(string(encoded)))
 	fmt.Fprintln(os.Stderr, "\nremove it all again with: go run ./cmd/seed-money-demo -clean")
+}
+
+// isLocalDSN reports whether a connection string points at this machine.
+// Args: dsn (a Postgres URL)
+// Returns: true only for an unmistakably local host
+// Handles: an unparseable DSN, treated as not local, so a malformed string
+// fails closed rather than opening the door
+func isLocalDSN(dsn string) bool {
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		return false
+	}
+	host := parsed.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 // randomKey returns 32 bytes standing in for a device public key.

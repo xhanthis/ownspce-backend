@@ -605,3 +605,49 @@ func TestCreateHouseholdGivesAWorkingLedgerInOneCall(t *testing.T) {
 		t.Errorf("memberCount = %v, want 1", got)
 	}
 }
+
+// A foreign key only proves a row exists somewhere. These pin that every write
+// taking an id from the client also checks the row belongs to this household —
+// otherwise a member of one household could attach another household's category
+// to their own records and every figure derived from it would cross a tenant
+// boundary.
+func TestWritesRejectAnotherHouseholdsCategory(t *testing.T) {
+	h := newHarness(t)
+	a := h.signUp("owner")
+	mine := h.enableMoney(a)
+	theirs := h.enableMoney(a)
+	foreign := h.firstCategory(a, theirs, "expense")
+
+	t.Run("bill", func(t *testing.T) {
+		body := map[string]any{"name": "Rent", "emoji": "🏠", "amountMinor": 5_200_000, "dayOfMonth": 3, "categoryId": foreign}
+		rec := h.do(http.MethodPost, "/v1/money/households/"+mine+"/bills", a, body)
+		requireStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("budget", func(t *testing.T) {
+		rec := h.do(http.MethodPut, "/v1/money/households/"+mine+"/budgets", a, map[string]any{"categoryId": foreign, "limitMinor": 100000})
+		requireStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("transaction update", func(t *testing.T) {
+		local := h.firstCategory(a, mine, "expense")
+		create := map[string]any{"clientId": uuid.NewString(), "categoryId": local, "type": "expense", "amountMinor": 5000, "occurredOn": today()}
+		rec := h.do(http.MethodPost, "/v1/money/households/"+mine+"/transactions", a, create)
+		requireStatus(t, rec, http.StatusCreated)
+		id := decodeBody(t, rec)["id"].(string)
+
+		rec = h.do(http.MethodPatch, "/v1/money/households/"+mine+"/transactions/"+id, a, map[string]any{"categoryId": foreign})
+		requireStatus(t, rec, http.StatusForbidden)
+	})
+
+	t.Run("transaction account", func(t *testing.T) {
+		rec := h.do(http.MethodPost, "/v1/money/households/"+theirs+"/accounts", a, map[string]any{"name": "Their bank", "kind": "bank"})
+		requireStatus(t, rec, http.StatusCreated)
+		foreignAccount := decodeBody(t, rec)["id"].(string)
+
+		local := h.firstCategory(a, mine, "expense")
+		body := map[string]any{"clientId": uuid.NewString(), "categoryId": local, "type": "expense", "amountMinor": 5000, "occurredOn": today(), "accountId": foreignAccount}
+		rec = h.do(http.MethodPost, "/v1/money/households/"+mine+"/transactions", a, body)
+		requireStatus(t, rec, http.StatusForbidden)
+	})
+}
