@@ -98,8 +98,27 @@ func provision(ctx context.Context, st *store.Store, signer *auth.Signer, raw st
 		log.Fatalf("decode request: %v", err)
 	}
 
+	// Every key is decoded before a single row is written. Validating as we go
+	// would leave a user behind on the first bad key, with its id never printed
+	// and so never cleaned up — a leak that only shows itself weeks later as
+	// junk in the accounts table.
+	keys := make([][][]byte, len(req.Users))
+	for i, spec := range req.Users {
+		keys[i] = make([][]byte, len(spec.Devices))
+		for j, encoded := range spec.Devices {
+			publicKey, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				log.Fatalf("%s device %d: not base64: %v", spec.Label, j, err)
+			}
+			if err := seal.ValidatePublicKey(publicKey); err != nil {
+				log.Fatalf("%s device %d: %v", spec.Label, j, err)
+			}
+			keys[i][j] = publicKey
+		}
+	}
+
 	out := make([]userOut, 0, len(req.Users))
-	for _, spec := range req.Users {
+	for i, spec := range req.Users {
 		email := fmt.Sprintf("kosh-e2e-%s@ownspce.test", uuid.NewString())
 		user, _, err := st.UpsertUserByProvider(ctx, "google", "sub-"+uuid.NewString(), email, spec.Label, "")
 		if err != nil {
@@ -107,15 +126,7 @@ func provision(ctx context.Context, st *store.Store, signer *auth.Signer, raw st
 		}
 
 		devices := make([]deviceOut, 0, len(spec.Devices))
-		for index, encoded := range spec.Devices {
-			publicKey, err := base64.StdEncoding.DecodeString(encoded)
-			if err != nil {
-				log.Fatalf("%s device %d: not base64: %v", spec.Label, index, err)
-			}
-			if err := seal.ValidatePublicKey(publicKey); err != nil {
-				log.Fatalf("%s device %d: %v", spec.Label, index, err)
-			}
-
+		for index, publicKey := range keys[i] {
 			device, err := st.RegisterDevice(ctx, user.ID, fmt.Sprintf("%s-%d", spec.Label, index), "web", publicKey)
 			if err != nil {
 				log.Fatalf("register device: %v", err)
