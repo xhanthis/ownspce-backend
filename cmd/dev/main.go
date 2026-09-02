@@ -1,6 +1,6 @@
 // Command dev runs the same chi router as the Vercel function over a local HTTP
 // listener, so the API can be exercised end to end without vercel dev.
-// Usage: go run ./cmd/dev  (reads .env if present, PORT defaults to 8080)
+// Usage: go run ./cmd/dev  (reads .env if present, PORT defaults to 5001)
 package main
 
 import (
@@ -24,7 +24,7 @@ func main() {
 
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "5001"
 	}
 
 	srv := &http.Server{Addr: ":" + port, Handler: server, ReadHeaderTimeout: 5 * time.Second}

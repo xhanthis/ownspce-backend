@@ -48,8 +48,8 @@ cmd/keygen                generate the Ed25519 session keypair
 cp .env.example .env          # fill in DATABASE_URL and the Google client ids
 go run ./cmd/keygen           # paste the two lines into .env
 go run ./cmd/migrate up       # uses DATABASE_URL_UNPOOLED
-go run ./cmd/dev              # http://localhost:8080/v1
-curl localhost:8080/v1/health
+go run ./cmd/dev              # http://localhost:5001/v1
+curl localhost:5001/v1/health
 ```
 
 `DATABASE_URL` must be the Neon **pooled** (PgBouncer) URL — serverless functions would otherwise exhaust connections. Migrations use `DATABASE_URL_UNPOOLED`, because transaction pooling breaks the advisory locks golang-migrate relies on.
