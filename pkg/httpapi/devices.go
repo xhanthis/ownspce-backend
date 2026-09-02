@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -81,13 +82,16 @@ func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toDevicePayload(*device, callerFrom(r.Context()).DeviceID))
 }
 
+// approveWrappedKey is one space key re-wrapped for the device being approved.
+type approveWrappedKey struct {
+	SpaceID    string `json:"spaceId"`
+	KeyEpoch   int    `json:"keyEpoch"`
+	WrappedKey string `json:"wrappedKey"`
+}
+
 type approveDeviceRequest struct {
-	Recovery    bool `json:"recovery"`
-	WrappedKeys []struct {
-		SpaceID    string `json:"spaceId"`
-		KeyEpoch   int    `json:"keyEpoch"`
-		WrappedKey string `json:"wrappedKey"`
-	} `json:"wrappedKeys"`
+	Recovery    bool                `json:"recovery"`
+	WrappedKeys []approveWrappedKey `json:"wrappedKeys"`
 }
 
 // handleApproveDevice activates a pending device and stores the space keys wrapped
@@ -118,7 +122,12 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 	case selfApproval && !req.Recovery:
 		writeError(w, errForbidden("approval_required", "a device cannot approve itself unless it proves recovery-phrase possession by supplying re-wrapped keys with recovery: true"))
 		return
-	case !selfApproval && c.Status != store.DeviceStatusActive:
+	case selfApproval:
+		if err := s.assertRecoveryCoverage(r.Context(), c.UserID, req.WrappedKeys); err != nil {
+			writeError(w, err)
+			return
+		}
+	case c.Status != store.DeviceStatusActive:
 		writeError(w, errForbidden("device_pending", "only an active device can approve another device"))
 		return
 	}
@@ -161,6 +170,44 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toDevicePayload(*device, c.DeviceID))
+}
+
+// assertRecoveryCoverage is the closest thing the server can get to checking a
+// recovery phrase.
+//
+// It cannot verify one — that is the whole point of holding no keys. What it can
+// refuse is the trivial lie: a pending device that claims recovery and supplies
+// nothing. Without this, any device could activate itself by asserting recovery
+// with an empty list, which would make device approval decorative. A device that
+// supplies wraps it could not actually produce still activates, and still cannot
+// read a thing, because the wraps it filed for itself are the garbage it sent.
+//
+// An account with no spaces is allowed through: there is nothing to prove
+// possession of, and refusing would strand somebody whose only device is this one.
+// Args: ctx, userID, the wrapped keys the device supplied
+// Returns: nil when the claim is admissible, a 403 apiError otherwise
+func (s *Server) assertRecoveryCoverage(ctx context.Context, userID uuid.UUID, supplied []approveWrappedKey) error {
+	spaces, wraps, err := s.store.RecoveryCoverage(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if spaces == 0 {
+		return nil
+	}
+	if len(wraps) == 0 {
+		return errForbidden("no_recovery_key", "this account has no recovery phrase on file, so recovery cannot approve a device; approve it from a device you already use")
+	}
+
+	seen := make(map[string]bool, len(supplied))
+	for _, key := range supplied {
+		seen[key.SpaceID] = true
+	}
+	for _, wrap := range wraps {
+		if !seen[wrap.SpaceID.String()] {
+			return errForbidden("incomplete_recovery", "a recovery approval must re-wrap every space the phrase can open; refetch GET /recovery/spaces and send them all")
+		}
+	}
+	return nil
 }
 
 // handlePendingKeys tells an approving device exactly which spaces still need a
@@ -238,4 +285,27 @@ func (s *Server) handleKeyDirectory(w http.ResponseWriter, r *http.Request) {
 		devices = append(devices, map[string]string{"deviceId": d.ID.String(), "publicKey": encodeB64(d.PublicKey)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"userId": userID.String(), "devices": devices, "recoveryPublicKey": encodeB64(dir.RecoveryPublicKey)})
+}
+
+// handleRecoveryWraps serves the space keys wrapped to the caller's account
+// recovery key.
+//
+// Deliberately outside requireActiveDevice. Recovery is the case where every
+// device is gone and the one asking is pending by definition, so requiring an
+// approved device would make the recovery phrase useless at the only moment it
+// matters. What is served is sealed to the recovery key alone: a pending device
+// that does not have the phrase learns nothing but how many spaces exist, which
+// GET /devices already implies.
+func (s *Server) handleRecoveryWraps(w http.ResponseWriter, r *http.Request) {
+	wraps, err := s.store.ListRecoveryWraps(r.Context(), callerFrom(r.Context()).UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	out := make([]map[string]any, 0, len(wraps))
+	for _, wrap := range wraps {
+		out = append(out, map[string]any{"spaceId": wrap.SpaceID.String(), "keyEpoch": wrap.KeyEpoch, "recoveryWrappedKey": encodeB64(wrap.WrappedKey)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"spaces": out})
 }

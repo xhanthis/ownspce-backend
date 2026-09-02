@@ -86,11 +86,6 @@ func (s *Server) routes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
 
-			// Money sits outside requireActiveDevice on purpose; see the note at
-			// the top of money.go. Its rows are readable, so a wrapped space key
-			// is not what stands between a caller and the data.
-			s.moneyRoutes(r)
-
 			r.Post("/auth/logout", s.handleAuthLogout)
 			r.Get("/me", s.handleGetMe)
 			r.With(s.rateLimit(ratelimit.ProfileWrite, subjectUser)).Patch("/me", s.handlePatchMe)
@@ -98,12 +93,19 @@ func (s *Server) routes() http.Handler {
 			r.Get("/devices", s.handleListDevices)
 			r.With(s.rateLimit(ratelimit.DeviceRegister, subjectUser)).Post("/devices", s.handleRegisterDevice)
 			r.Get("/devices/{deviceID}/pending-keys", s.handlePendingKeys)
+			r.With(s.rateLimit(ratelimit.KeyDirectory, subjectUser)).Get("/recovery/spaces", s.handleRecoveryWraps)
 			r.Post("/devices/{deviceID}/approve", s.handleApproveDevice)
 			r.Delete("/devices/{deviceID}", s.handleRevokeDevice)
 
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireActiveDevice)
 				r.With(s.rateLimit(ratelimit.KeyDirectory, subjectUser)).Get("/keys/{userID}", s.handleKeyDirectory)
+
+				// Money sits inside requireActiveDevice: a household's records
+				// are sealed under its space key, and a device with no wrapped
+				// key cannot open one of them. Letting it through would buy a
+				// screen full of ciphertext, not a ledger.
+				s.moneyRoutes(r)
 
 				r.Get("/spaces", s.handleListSpaces)
 				r.With(s.rateLimit(ratelimit.SpaceWrite, subjectUser)).Post("/spaces", s.handleCreateSpace)
