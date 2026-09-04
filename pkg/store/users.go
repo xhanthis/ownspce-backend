@@ -11,6 +11,11 @@ import (
 
 // User holds Tier 0 data only — every field here is deliberately readable by the
 // server. Nothing derived from note content may ever be added to this struct.
+// EscrowPublicKey is stored in the column recovery_public_key. The name is
+// historical: the key it holds used to be derived from a phrase the person kept,
+// and is now an escrow key the server holds for them. Renaming the column would
+// break every deployed client and every running API instance the moment the
+// migration landed, which is exactly how this went wrong once already.
 type User struct {
 	ID              uuid.UUID
 	Email           string
@@ -30,7 +35,7 @@ type User struct {
 	CreatedAt       time.Time
 }
 
-const userColumns = `id, email, name, username, avatar_url, plan, escrow_public_key, streak_count, streak_updated_on, theme, font, palette, language, notify_email, notify_push, created_at`
+const userColumns = `id, email, name, username, avatar_url, plan, recovery_public_key, streak_count, streak_updated_on, theme, font, palette, language, notify_email, notify_push, created_at`
 
 func scanUser(row pgx.Row) (*User, error) {
 	var u User
@@ -132,7 +137,7 @@ func (s *Store) GetUser(ctx context.Context, id uuid.UUID) (*User, error) {
 // Returns: public key, sealed private key (both nil when the account has none
 // yet), error
 func (s *Store) EscrowKey(ctx context.Context, userID uuid.UUID) (publicKey, sealedPrivateKey []byte, err error) {
-	err = s.pool.QueryRow(ctx, "SELECT escrow_public_key, escrow_private_key FROM users WHERE id = $1", userID).Scan(&publicKey, &sealedPrivateKey)
+	err = s.pool.QueryRow(ctx, "SELECT recovery_public_key, escrow_private_key FROM users WHERE id = $1", userID).Scan(&publicKey, &sealedPrivateKey)
 	if err != nil {
 		if noRows(err) {
 			return nil, nil, ErrNotFound
@@ -157,7 +162,7 @@ func (s *Store) EscrowKey(ctx context.Context, userID uuid.UUID) (publicKey, sea
 // Args: ctx, userID, publicKey, sealedPrivateKey
 // Returns: whether this call was the one that installed the key, error
 func (s *Store) SetEscrowKey(ctx context.Context, userID uuid.UUID, publicKey, sealedPrivateKey []byte) (bool, error) {
-	tag, err := s.pool.Exec(ctx, "UPDATE users SET escrow_public_key = $2, escrow_private_key = $3, updated_at = now() WHERE id = $1 AND escrow_private_key IS NULL", userID, publicKey, sealedPrivateKey)
+	tag, err := s.pool.Exec(ctx, "UPDATE users SET recovery_public_key = $2, escrow_private_key = $3, updated_at = now() WHERE id = $1 AND escrow_private_key IS NULL", userID, publicKey, sealedPrivateKey)
 	if err != nil {
 		return false, err
 	}
@@ -204,7 +209,7 @@ func (s *Store) UpdateProfile(ctx context.Context, id uuid.UUID, patch ProfilePa
 		}
 	}
 
-	u, err := scanUser(s.pool.QueryRow(ctx, "UPDATE users SET name = COALESCE($2, name), username = COALESCE($3, username), avatar_url = COALESCE($4, avatar_url), theme = COALESCE($5, theme), font = COALESCE($6, font), palette = COALESCE($7, palette), language = COALESCE($8, language), notify_email = COALESCE($9, notify_email), notify_push = COALESCE($10, notify_push), streak_count = COALESCE($11, streak_count), streak_updated_on = COALESCE($12, streak_updated_on), escrow_public_key = COALESCE($13, escrow_public_key), updated_at = now() WHERE id = $1 RETURNING "+userColumns, id, patch.Name, patch.Username, patch.AvatarURL, patch.Theme, patch.Font, patch.Palette, patch.Language, patch.NotifyEmail, patch.NotifyPush, patch.StreakCount, patch.StreakUpdatedOn, nullIfEmptyBytes(patch.EscrowPublicKey)))
+	u, err := scanUser(s.pool.QueryRow(ctx, "UPDATE users SET name = COALESCE($2, name), username = COALESCE($3, username), avatar_url = COALESCE($4, avatar_url), theme = COALESCE($5, theme), font = COALESCE($6, font), palette = COALESCE($7, palette), language = COALESCE($8, language), notify_email = COALESCE($9, notify_email), notify_push = COALESCE($10, notify_push), streak_count = COALESCE($11, streak_count), streak_updated_on = COALESCE($12, streak_updated_on), recovery_public_key = COALESCE($13, recovery_public_key), updated_at = now() WHERE id = $1 RETURNING "+userColumns, id, patch.Name, patch.Username, patch.AvatarURL, patch.Theme, patch.Font, patch.Palette, patch.Language, patch.NotifyEmail, patch.NotifyPush, patch.StreakCount, patch.StreakUpdatedOn, nullIfEmptyBytes(patch.EscrowPublicKey)))
 	if err != nil && isUniqueViolation(err, "users_username_key") {
 		return nil, ErrConflict
 	}

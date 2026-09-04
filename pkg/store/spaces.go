@@ -87,7 +87,7 @@ func insertWrappedKeys(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID, epoch 
 	batch := &pgx.Batch{}
 	for _, k := range keys {
 		if k.DeviceID == nil {
-			batch.Queue("INSERT INTO space_keys (space_id, user_id, device_id, key_epoch, wrapped_key, created_by) SELECT $1, $2, NULL, $3, $4, $5 WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.escrow_public_key IS NOT NULL) ON CONFLICT DO NOTHING", spaceID, memberID, epoch, k.WrappedKey, actorID)
+			batch.Queue("INSERT INTO space_keys (space_id, user_id, device_id, key_epoch, wrapped_key, created_by) SELECT $1, $2, NULL, $3, $4, $5 WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.recovery_public_key IS NOT NULL) ON CONFLICT DO NOTHING", spaceID, memberID, epoch, k.WrappedKey, actorID)
 			continue
 		}
 		batch.Queue("INSERT INTO space_keys (space_id, user_id, device_id, key_epoch, wrapped_key, created_by) SELECT $1, $2, d.id, $3, $4, $5 FROM devices d WHERE d.id = $6 AND d.user_id = $2 AND d.status = 'active' ON CONFLICT DO NOTHING", spaceID, memberID, epoch, k.WrappedKey, actorID, *k.DeviceID)

@@ -9,7 +9,7 @@ Reference implementation target: **libsodium** (swift-sodium, lazysodium, libsod
 | Purpose | Primitive | Notes |
 |---|---|---|
 | Device identity | X25519 keypair | Private key never leaves the device (Keychain / Keystore / non-extractable WebCrypto). A new key is a new device. |
-| Account escrow identity | X25519 keypair minted **server-side**, private half sealed under `ESCROW_MASTER_KEY` | Clients only ever see the public half, still delivered as `recoveryPublicKey` for wire compatibility. Clients **cannot** set it; `PATCH /me` accepts and ignores the field. |
+| Account escrow identity | X25519 keypair minted **server-side**, private half sealed under `ESCROW_MASTER_KEY` | Clients only ever see the public half, delivered as `recoveryPublicKey` and stored in the column of the same name — both names are historical and deliberately unchanged. Clients **cannot** set it; `PATCH /me` accepts and ignores the field. |
 | Space key | 32-byte random symmetric key | One per space, per epoch. |
 | Payload encryption | XChaCha20-Poly1305 AEAD | 24-byte nonce, 16-byte tag, 40 bytes overhead total. |
 | Key wrapping | `crypto_box_seal` (sealed box) to a recipient X25519 public key | ~80 bytes for a 32-byte key. The server stores these and cannot unwrap them. |

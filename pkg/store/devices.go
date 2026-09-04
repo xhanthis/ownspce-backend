@@ -221,7 +221,7 @@ type KeyDirectory struct {
 // Returns: directory (active devices only), error (ErrNotFound for unknown user)
 func (s *Store) PublicKeyDirectory(ctx context.Context, userID uuid.UUID) (*KeyDirectory, error) {
 	dir := &KeyDirectory{UserID: userID}
-	if err := s.pool.QueryRow(ctx, "SELECT escrow_public_key FROM users WHERE id = $1", userID).Scan(&dir.EscrowPublicKey); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT recovery_public_key FROM users WHERE id = $1", userID).Scan(&dir.EscrowPublicKey); err != nil {
 		if noRows(err) {
 			return nil, ErrNotFound
 		}
