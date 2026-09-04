@@ -746,3 +746,29 @@ func (h *harness) createSpaceWithEscrow(a *actor) string {
 	requireStatus(h.t, rec, http.StatusCreated)
 	return decodeBody(h.t, rec)["id"].(string)
 }
+
+// TestApproveStillAcceptsTheFieldsDeployedClientsSend is a contract test, not a
+// feature test. decodeJSON refuses unknown fields, so deleting a field from a
+// request struct is a breaking API change for every client already in the wild —
+// which is exactly how device approval started answering 400 in production after
+// the recovery phrase was removed. Any future removal has to fail here first.
+func TestApproveStillAcceptsTheFieldsDeployedClientsSend(t *testing.T) {
+	// Arrange — an active device approving a pending one, as the notes app does.
+	h := newHarness(t)
+	owner := h.signUp("an already trusted laptop")
+	pending := h.addDevice(owner.UserID, "a new browser")
+
+	// Act — the exact body shape a deployed client sends, legacy field included.
+	rec := h.do(http.MethodPost, "/v1/devices/"+pending.DeviceID.String()+"/approve", owner, map[string]any{
+		"recovery": false,
+		"wrappedKeys": []map[string]any{
+			{"spaceId": uuid.NewString(), "keyEpoch": 1, "wrappedKey": wrappedKey(t)},
+		},
+	})
+
+	// Assert
+	requireStatus(t, rec, http.StatusOK)
+	if decodeBody(t, rec)["status"] != "active" {
+		t.Fatalf("the device was not approved: %s", rec.Body.String())
+	}
+}
