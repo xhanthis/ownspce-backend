@@ -92,7 +92,13 @@ type approveWrappedKey struct {
 }
 
 type approveDeviceRequest struct {
-	EmailCode   string              `json:"emailCode"`
+	EmailCode string `json:"emailCode"`
+	// Recovery is accepted and ignored. The recovery-phrase path is gone, but
+	// every deployed client still sends this field on an ordinary approval, and
+	// decodeJSON refuses unknown fields — so removing it from the struct turned
+	// every device approval into a 400 the moment it shipped. A field a live
+	// client still sends is part of the contract until that client stops.
+	Recovery    bool                `json:"recovery"`
 	WrappedKeys []approveWrappedKey `json:"wrappedKeys"`
 }
 
