@@ -336,3 +336,47 @@ func TestRefreshLetsInADeviceStrandedByTheOldFlow(t *testing.T) {
 	refreshed := &actor{UserID: owner.UserID, DeviceID: stranded.DeviceID, Token: body["accessToken"].(string)}
 	requireStatus(t, h.do(http.MethodGet, "/v1/spaces", refreshed, nil), http.StatusOK)
 }
+
+// TestOnlyAnAppSurfaceMaySpendTheCookie is the blast-radius limit on the
+// cross-surface session.
+//
+// The CORS allowlist necessarily contains the marketing origin, which is also
+// where published pages — user-authored HTML — are served from. A cookie the
+// browser will attach to a same-site request plus an endpoint that mints a
+// device from it means one XSS on that origin would register an attacker's own
+// device on somebody's account and have the server hand it every space key from
+// escrow. Reading the response is not even required; the write is the damage.
+//
+// So the credentialed surfaces are a separate, shorter list than the CORS
+// allowlist, and an origin outside it gets nothing — no cookie issued, and no
+// cookie spent.
+func TestOnlyAnAppSurfaceMaySpendTheCookie(t *testing.T) {
+	// Arrange — a real session, and its real cookie.
+	h := newHarness(t)
+	_, _, cookie := h.signInFromSurface(t, appOrigin)
+	public, _ := deviceKeypair(t)
+	body := map[string]any{"device": map[string]any{"label": "attacker", "platform": "web", "publicKey": encodeB64(public[:])}}
+
+	// Act — the same cookie, presented from the publish/marketing origin.
+	rec := h.fromSurface(http.MethodPost, "/v1/auth/continue", h.server.cfg.PublicSiteOrigin, []*http.Cookie{cookie}, nil, body)
+
+	// Assert — refused, and no device was registered on the way past.
+	requireStatus(t, rec, http.StatusForbidden)
+
+	var devices int
+	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM devices WHERE public_key = $1", public[:]).Scan(&devices); err != nil {
+		t.Fatalf("count devices: %v", err)
+	}
+	if devices != 0 {
+		t.Fatalf("a refused origin still registered %d devices", devices)
+	}
+
+	// And the cookie is never issued to that origin in the first place.
+	signIn := h.fromSurface(http.MethodPost, "/v1/auth/session", h.server.cfg.PublicSiteOrigin, nil, nil,
+		sessionBody(fmt.Sprintf("publish-%s@ownspce.test", uuid.NewString()), h.issueSignInCode(fmt.Sprintf("publish-%s@ownspce.test", uuid.NewString()), nil), public[:]))
+	for _, c := range (&http.Response{Header: signIn.Header()}).Cookies() {
+		if c.Name == sessionCookieName && c.Value != "" {
+			t.Fatal("the marketing origin was handed a cross-surface session cookie")
+		}
+	}
+}

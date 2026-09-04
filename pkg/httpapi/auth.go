@@ -184,6 +184,16 @@ func (s *Server) handleAuthContinue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Checked before the cookie is even read. This endpoint turns an ambient
+	// credential into a device of the caller's choosing, holding every space key
+	// the account has in escrow — so it answers only to the surfaces that are
+	// meant to have it, never to the wider CORS allowlist that has to include
+	// the origin serving published pages.
+	if !s.cfg.SessionOriginAllowed(r.Header.Get("Origin")) {
+		writeError(w, errForbidden("origin_not_permitted", "this origin cannot continue an OwnSpce session"))
+		return
+	}
+
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || cookie.Value == "" {
 		writeError(w, errUnauthorized("no OwnSpce session on this browser"))

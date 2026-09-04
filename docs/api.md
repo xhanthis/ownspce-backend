@@ -12,7 +12,7 @@ Authenticated routes take `Authorization: Bearer <accessToken>`. Errors are unif
 |---|---|
 | 400 | `invalid_request` |
 | 401 | `unauthorized`, `token_reused`, `token_expired` |
-| 403 | `device_pending`, `insufficient_role`, `approval_required`, `publish_limit`, `email_unverified`, `owner_immutable` |
+| 403 | `device_pending`, `insufficient_role`, `approval_required`, `origin_not_permitted`, `publish_limit`, `email_unverified`, `owner_immutable` |
 | 404 | `not_found` |
 | 409 | `username_taken`, `username_reserved`, `slug_reserved`, `stale_epoch`, `epoch_conflict`, `version_conflict`, `snapshot_conflict`, `already_member_or_stale_epoch` |
 | 413 | `bucket_violation`, `payload_too_large` |
@@ -101,7 +101,9 @@ Set-Cookie: os_session=…; Domain=ownspce.com; Path=/; Max-Age=…; HttpOnly; S
 
 It carries a refresh token in its own family, so it inherits sliding expiry, replay detection and family revocation from the ordinary token machinery. `HttpOnly` keeps it out of reach of script on every surface at once; `SameSite=Lax` is sufficient because api, app and money share a registrable domain and the request is therefore same-site.
 
-Set `SESSION_COOKIE_DOMAIN` to enable it. Unset — the right answer locally, and for any deployment whose surfaces do not share a domain — no cookie is issued and each surface asks for its own sign-in.
+Set **both** `SESSION_COOKIE_DOMAIN` (e.g. `ownspce.com`) and `SESSION_ORIGINS` (e.g. `https://app.ownspce.com,https://money.ownspce.com`) to enable it. With either unset — the right answer locally, and for any deployment whose surfaces do not share a domain — no cookie is issued and each surface asks for its own sign-in.
+
+`SESSION_ORIGINS` is deliberately **shorter than the CORS allowlist** and must never contain `PUBLIC_SITE_ORIGIN`. That origin serves published pages, which are HTML somebody else wrote; a cookie the browser attaches to same-site requests plus an endpoint that mints a device from it would turn one XSS there into an attacker's own device on somebody's account, holding every space key re-wrapped from escrow. Reading the response would not even be needed — the registration is the damage. An origin outside `SESSION_ORIGINS` is never handed the cookie and gets `403 origin_not_permitted` from `/auth/continue`.
 
 ### POST /auth/logout
 Revokes the calling device's refresh tokens, and clears **and revokes** the cross-surface cookie. Signing out of Money and staying silently signed in on app is worse than signing out of both. → `204`.

@@ -36,7 +36,23 @@ type Config struct {
 	// and stores the cookie against the bare domain either way, so keeping it
 	// would only mean this field never equalled what a parsed cookie reports.
 	SessionCookieDomain string
-	Env                 string
+	// SessionOrigins are the surfaces allowed to hold and spend that cookie:
+	// app.ownspce.com and money.ownspce.com, and nothing else.
+	//
+	// Deliberately a shorter list than AllowedOrigins rather than the same one.
+	// The CORS allowlist has to contain the marketing origin, and that origin is
+	// also where published pages — HTML somebody else wrote — are served from. A
+	// cookie the browser attaches to a same-site request, plus an endpoint that
+	// mints a device from it, would turn one XSS there into an attacker's own
+	// device sitting on somebody's account with every space key re-wrapped for
+	// it. Reading the response would not even be needed; the write is the
+	// damage. So the credentialed path gets its own, minimal list.
+	//
+	// Empty disables the cross-surface session entirely, exactly as an empty
+	// SessionCookieDomain does — an operator has to name the app surfaces on
+	// purpose.
+	SessionOrigins []string
+	Env            string
 }
 
 // Load reads configuration from the environment and validates what the API
@@ -54,10 +70,12 @@ func Load() (*Config, error) {
 		EmailFromName:       envOr("EMAIL_FROM_NAME", "OwnSpce"),
 		PublicSiteOrigin:    envOr("PUBLIC_SITE_ORIGIN", "https://ownspce.com"),
 		SessionCookieDomain: strings.TrimPrefix(strings.TrimSpace(os.Getenv("SESSION_COOKIE_DOMAIN")), "."),
+		SessionOrigins:      splitList(os.Getenv("SESSION_ORIGINS")),
 		Env:                 envOr("ENV", "development"),
 	}
 	c.AppleAudiences = splitList(strings.Join([]string{os.Getenv("APPLE_BUNDLE_ID"), os.Getenv("APPLE_SERVICES_ID")}, ","))
 	c.AllowedOrigins = mergeOrigins(c.PublicSiteOrigin, splitList(os.Getenv("ALLOWED_ORIGINS")))
+	c.SessionOrigins = mergeOrigins("", c.SessionOrigins)
 
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
@@ -94,6 +112,27 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) IsProduction() bool { return c.Env == "production" }
+
+// SessionOriginAllowed reports whether an origin may hold or spend the
+// cross-surface session cookie.
+//
+// Separate from originAllowed on purpose — see SessionOrigins for why the
+// marketing origin must not be on this list. Outside production any localhost
+// origin passes, so a local Vite server and a local Next server can exercise
+// the handoff between them.
+// Args: origin (the browser's Origin header, exactly as sent)
+// Returns: true when this origin is a designated app surface
+func (c *Config) SessionOriginAllowed(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range c.SessionOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return !c.IsProduction() && strings.HasPrefix(origin, "http://localhost")
+}
 
 func decodeKey(name string, want int) ([]byte, error) {
 	raw := os.Getenv(name)

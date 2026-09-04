@@ -101,6 +101,13 @@ resend rather than leaving the invitee to guess.
 Consequence to accept: `isNewUser` is `false` on that person's first real
 sign-in, so onboarding must key off "has no space" rather than off that flag.
 
+**Consent moves to the exit.** Anyone can type any address into an invite box, so
+a person can now find themselves in a household they never agreed to join. Two
+things follow and both are required, not optional: every client offers **Leave
+this household** to a non-owner, and the client opens **your own** household in
+preference to one somebody added you to — the API lists them oldest first, which
+would otherwise let a stranger's household become the one the app opens on.
+
 ## 3. One session across the surfaces
 
 `app.ownspce.com` and `money.ownspce.com` are one product. Signing in on either
@@ -123,6 +130,15 @@ middleware already answers `Access-Control-Allow-Credentials: true`.
 device's public key against the account it names, admits it, and returns the same
 `sessionResponse` every other door returns. Rate-limited as `AuthRefresh`.
 
+**Only app surfaces may spend it.** `SESSION_ORIGINS` names them, and it is a
+shorter list than the CORS allowlist on purpose: that list has to include the
+origin serving published pages, which is HTML somebody else wrote. One XSS there,
+against an endpoint that mints a device from an ambient cookie, would put an
+attacker's own device on the victim's account with every space key re-wrapped for
+it — and the attacker would not even need to read the response. So the origin is
+checked before the cookie is read, and a stranger origin gets `403
+origin_not_permitted` and is never handed a cookie in the first place.
+
 A surface with no session of its own tries this once before painting a sign-in
 screen. It costs one 401 for a browser that has never signed in anywhere.
 
@@ -132,10 +148,12 @@ than signing out of both.
 
 ## 4. The sign-in screen
 
-One screen for sign-in and sign-up. Three doors, none preferred — email code,
-Google, Apple — plus a **last used** badge on whichever door this browser used
-before (`ownspce.lastUsed` in `localStorage`, no network), and a returning-user
-row when an address is remembered.
+One screen for sign-in and sign-up. Two doors, neither preferred — email code
+and Google — plus a **last used** badge on whichever door this browser used
+before (`ownspce.lastDoor` / `ownspce.lastEmail` in `localStorage`, no network),
+and a returning-user row when an address is remembered. Apple is left off both
+clients until it is registered: a button that fails at the last step is worse
+than no button.
 
 Built twice, once per repo, sharing nothing but design tokens. `ownspce-web` is
 Vite + React and `ownspce-money` is Next; a shared package across two monorepos
@@ -143,7 +161,10 @@ would be more plumbing than the screen it carries.
 
 Gone from the web client with this screen: `PendingDevice`, `RecoverySetup`, the
 24-word phrase, and the `device_pending` / `needs_recovery_setup` auth phases.
-`AuthPhase` becomes `loading | signed_out | ready`.
+`AuthPhase` becomes `loading | signed_out | space_locked | ready`, where
+`space_locked` is reachable only for a space created before escrow existed —
+whose key the server genuinely holds no copy of, and which must be said out loud
+rather than rendered as an empty workspace.
 
 ## 5. The app switcher
 

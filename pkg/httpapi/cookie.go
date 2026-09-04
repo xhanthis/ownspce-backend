@@ -83,15 +83,17 @@ func (s *Server) dropSession(w http.ResponseWriter, r *http.Request) {
 
 // cookiesUsable reports whether this request can be answered with a
 // cross-surface cookie at all: the deployment has a shared parent domain, and
-// the caller is a browser on an origin the API already trusts. An installed app
-// sends no Origin and keeps no cookie jar, so minting one for it would file a
-// token row nobody will ever present.
+// the caller is a browser on one of the designated app surfaces.
+//
+// The check is against SessionOrigins rather than the CORS allowlist, which is
+// wider and necessarily includes the origin that serves published pages. An
+// installed app sends no Origin and keeps no cookie jar, so it fails this too —
+// minting one for it would file a token row nobody will ever present.
 func (s *Server) cookiesUsable(r *http.Request) bool {
 	if s.cfg.SessionCookieDomain == "" {
 		return false
 	}
-	origin := r.Header.Get("Origin")
-	return origin != "" && s.originAllowed(origin)
+	return s.cfg.SessionOriginAllowed(r.Header.Get("Origin"))
 }
 
 // writeSessionCookie sets or clears the cookie with the flags that make it safe
