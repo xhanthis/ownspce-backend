@@ -564,11 +564,11 @@ func TestEntryRangeBoundsAreValidated(t *testing.T) {
 	requireStatus(t, h.do(http.MethodGet, base+"?from="+daysAgo(5)+"&to="+today()+"&limit=501", owner, nil), http.StatusBadRequest)
 }
 
-// TestPendingDeviceCannotSelfApproveWithoutRecoveryCoverage closes the hole that
-// would make device approval decorative. Money now sits behind an active device,
-// so a pending device that could activate itself by asserting "recovery" with an
-// empty key list would walk straight past the gate.
-func TestPendingDeviceCannotSelfApproveWithoutRecoveryCoverage(t *testing.T) {
+// TestPendingDeviceCannotSelfApprove closes the hole that would make device
+// approval decorative. Money sits behind an active device, so a pending device
+// that could activate itself would walk straight past the gate. The only
+// self-approval left is a mailed code, and it is tested in email_auth_test.go.
+func TestPendingDeviceCannotSelfApprove(t *testing.T) {
 	h := newHarness(t)
 	owner := h.signUp("owner")
 	h.createHousehold(owner)
@@ -576,34 +576,21 @@ func TestPendingDeviceCannotSelfApproveWithoutRecoveryCoverage(t *testing.T) {
 	pending := h.addDevice(owner.UserID, "attacker browser")
 	path := "/v1/devices/" + pending.DeviceID.String() + "/approve"
 
-	// No recovery key on the account at all: recovery cannot be the way in.
-	empty := h.do(http.MethodPost, path, pending, map[string]any{"recovery": true, "wrappedKeys": []any{}})
+	// Act
+	empty := h.do(http.MethodPost, path, pending, map[string]any{"wrappedKeys": []any{}})
+
+	// Assert
 	requireStatus(t, empty, http.StatusForbidden)
-	if code := errorCode(t, empty); code != "no_recovery_key" {
-		t.Errorf("code = %q, want no_recovery_key", code)
+	if code := errorCode(t, empty); code != "approval_required" {
+		t.Errorf("code = %q, want approval_required", code)
 	}
 
 	// Still pending, and still locked out of the ledger.
 	requireStatus(t, h.do(http.MethodGet, "/v1/money/households", pending, nil), http.StatusForbidden)
 
-	// With a recovery key on file, a claim that skips a space is refused too.
-	requireStatus(t, h.do(http.MethodPatch, "/v1/me", owner, map[string]any{"recoveryPublicKey": encodeB64(randomBytes(t, seal.PublicKeySize))}), http.StatusOK)
-	h.createSpaceWithRecovery(owner)
-
-	short := h.do(http.MethodPost, path, pending, map[string]any{"recovery": true, "wrappedKeys": []any{}})
-	requireStatus(t, short, http.StatusForbidden)
-	if code := errorCode(t, short); code != "incomplete_recovery" {
-		t.Errorf("code = %q, want incomplete_recovery", code)
-	}
-
-	// And a claim that covers every recovery-wrapped space is admitted, because
-	// the server cannot check a phrase — only that the claim is possible.
-	wraps := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
-	requireStatus(t, wraps, http.StatusOK)
-	covering := make([]map[string]any, 0)
-	for _, raw := range decodeBody(t, wraps)["spaces"].([]any) {
-		space := raw.(map[string]any)
-		covering = append(covering, map[string]any{"spaceId": space["spaceId"], "keyEpoch": space["keyEpoch"], "wrappedKey": wrappedKey(t)})
-	}
-	requireStatus(t, h.do(http.MethodPost, path, pending, map[string]any{"recovery": true, "wrappedKeys": covering}), http.StatusOK)
+	// Supplying wraps it invented does not help either.
+	invented := h.do(http.MethodPost, path, pending, map[string]any{"wrappedKeys": []map[string]any{
+		{"spaceId": uuid.NewString(), "keyEpoch": 1, "wrappedKey": wrappedKey(t)},
+	}})
+	requireStatus(t, invented, http.StatusForbidden)
 }

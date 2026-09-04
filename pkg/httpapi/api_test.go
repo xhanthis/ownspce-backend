@@ -265,7 +265,7 @@ func TestSecondDeviceIsPendingUntilApproved(t *testing.T) {
 		t.Errorf("code = %q, want device_pending", code)
 	}
 
-	selfApprove := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", second, map[string]any{"recovery": false, "wrappedKeys": []any{}})
+	selfApprove := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", second, map[string]any{"wrappedKeys": []any{}})
 	requireStatus(t, selfApprove, http.StatusForbidden)
 	if code := errorCode(t, selfApprove); code != "approval_required" {
 		t.Errorf("code = %q, want approval_required", code)
@@ -688,51 +688,55 @@ func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 	}
 }
 
-// TestRecoveryWrapsReachAPendingDevice is the endpoint the recovery phrase
-// depends on. Restoring from a phrase happens precisely when no device is
-// approved, so a pending device has to be able to fetch the recovery-wrapped
-// keys — which are useless to it without the phrase.
-func TestRecoveryWrapsReachAPendingDevice(t *testing.T) {
+// TestEscrowWrapsNeverLeaveTheServer pins the property that makes escrow
+// tolerable at all. The account's copy of a household key is readable by the
+// server — that is the deal — but it must never be servable to a caller, or a
+// pending device would be handed the very thing the email code is supposed to
+// gate. The endpoint that used to serve them, back when the copy was sealed to
+// a phrase only the person held, is gone.
+func TestEscrowWrapsNeverLeaveTheServer(t *testing.T) {
+	// Arrange
 	h := newHarness(t)
 	owner := h.signUp("owner")
+	h.escrowPublicKey(t, owner.UserID)
+	spaceID := h.createSpaceWithEscrow(owner)
 
-	requireStatus(t, h.do(http.MethodPatch, "/v1/me", owner, map[string]any{"recoveryPublicKey": encodeB64(randomBytes(t, seal.PublicKeySize))}), http.StatusOK)
-
-	spaceID := h.createSpaceWithRecovery(owner)
-	pending := h.addDevice(owner.UserID, "restored laptop")
+	pending := h.addDevice(owner.UserID, "a laptop nobody has let in")
 	if pending.Status != "pending" {
 		t.Fatalf("second device status = %q, want pending", pending.Status)
 	}
 
-	// The spaces list stays behind device approval; the recovery read does not.
-	requireStatus(t, h.do(http.MethodGet, "/v1/spaces", pending, nil), http.StatusForbidden)
+	// Act — the removed route, and the query that used to smuggle the same bytes
+	// out through the ordinary spaces list.
+	removed := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
+	viaQuery := h.do(http.MethodGet, "/v1/spaces?includeRecoveryKeys=true", owner, nil)
+	spaces := h.do(http.MethodGet, "/v1/spaces", pending, nil)
 
-	rec := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
-	requireStatus(t, rec, http.StatusOK)
-	spaces := decodeBody(t, rec)["spaces"].([]any)
-	if len(spaces) != 1 {
-		t.Fatalf("recovery spaces = %d, want 1", len(spaces))
-	}
-	first := spaces[0].(map[string]any)
-	if first["spaceId"] != spaceID {
-		t.Errorf("spaceId = %v, want %s", first["spaceId"], spaceID)
-	}
-	if first["recoveryWrappedKey"] == "" || first["recoveryWrappedKey"] == nil {
-		t.Error("the recovery wrap was not served")
+	// Assert — no route serves the escrow copy, and the ordinary list is still
+	// behind device approval.
+	requireStatus(t, removed, http.StatusNotFound)
+	requireStatus(t, spaces, http.StatusForbidden)
+
+	requireStatus(t, viaQuery, http.StatusOK)
+	for _, raw := range decodeBody(t, viaQuery)["spaces"].([]any) {
+		if _, leaked := raw.(map[string]any)["recoveryWrappedKey"]; leaked {
+			t.Fatal("GET /spaces still serves the account escrow wrap")
+		}
 	}
 
-	// Somebody else's account is not reachable through it.
-	stranger := h.signUp("stranger")
-	other := h.do(http.MethodGet, "/v1/recovery/spaces", stranger, nil)
-	requireStatus(t, other, http.StatusOK)
-	if got := len(decodeBody(t, other)["spaces"].([]any)); got != 0 {
-		t.Fatalf("a stranger saw %d recovery wraps", got)
+	// The wrap does exist; it is simply the server's to hold.
+	var escrowWraps int
+	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM space_keys WHERE space_id = $1 AND device_id IS NULL", spaceID).Scan(&escrowWraps); err != nil {
+		t.Fatalf("count escrow wraps: %v", err)
+	}
+	if escrowWraps != 1 {
+		t.Fatalf("escrow wraps = %d, want 1", escrowWraps)
 	}
 }
 
-// createSpaceWithRecovery creates a space whose key is wrapped for the actor's
-// device and for their account recovery key.
-func (h *harness) createSpaceWithRecovery(a *actor) string {
+// createSpaceWithEscrow creates a space whose key is wrapped for the actor's
+// device and for their account escrow key.
+func (h *harness) createSpaceWithEscrow(a *actor) string {
 	h.t.Helper()
 	body := map[string]any{"wrappedKeys": []map[string]any{
 		{"deviceId": a.DeviceID.String(), "wrappedKey": wrappedKey(h.t)},

@@ -32,13 +32,28 @@ Authenticated routes take `Authorization: Bearer <accessToken>`. Errors are unif
 
 ## Auth & profile
 
-### POST /auth/session
-Public. Verifies a Google or Apple ID token, creates the user on first call, and registers the calling device's public key in the same step.
+### POST /auth/email/code
+Public. Mails a six-digit sign-in code. Always `204`, whether or not the address has an account — the endpoint is deliberately not a membership oracle. `503 unavailable` only when the deployment has no mail provider.
 
 ```json
-// request
+{ "email": "r@x.com" }   →  204
+```
+
+A code lasts ten minutes, works once, is stored only as SHA-256, and is burnt after five wrong guesses. An address may be sent five codes an hour; beyond that the response is still `204` and no mail is sent.
+
+### POST /auth/session
+Public. Verifies a Google or Apple ID token — or a code this API mailed — creates the user on first call, and registers the calling device's public key in the same step. All three providers resolve to one account per email address, so a Google user who later signs in by code lands on the account they already have.
+
+```json
+// request, provider "google" or "apple"
 { "provider": "google",
   "idToken": "eyJ...",
+  "device": { "label": "MacBook", "platform": "macos", "publicKey": "<base64 32B X25519>" } }
+
+// request, provider "email"
+{ "provider": "email",
+  "email": "r@x.com",
+  "code": "123456",
   "device": { "label": "MacBook", "platform": "macos", "publicKey": "<base64 32B X25519>" } }
 
 // 200
@@ -51,6 +66,10 @@ Public. Verifies a Google or Apple ID token, creates the user on first call, and
 ```
 
 `platform` ∈ `ios | macos | android | windows | linux | web | ""`. The **first** live device of an account is `active`; every later one is `pending` until approved (see device approval). A pending device gets a session so it can poll for approval, but every data route answers `403 device_pending`.
+
+A first device that holds no keys is handed the account's escrow copies during this call. That is the lost-every-device path: revoke or lose them all, sign in again, and the replacement device is both trusted and able to read.
+
+A wrong or expired code answers `401`; a code burnt by five wrong guesses answers `403 code_exhausted`.
 
 ### POST /auth/refresh
 Public. Rotates the refresh token. Replaying a spent token revokes the entire family — the client must sign in again.
@@ -100,18 +119,25 @@ Tells an approving device exactly what to wrap. → `{"deviceId","publicKey","sp
 Activates a pending device and files the space keys wrapped to its public key.
 
 ```json
-{ "recovery": false,
+{ "emailCode": "",
   "wrappedKeys": [ { "spaceId": "…", "keyEpoch": 2, "wrappedKey": "<base64 sealed box>" } ] }
 ```
 
 Two callers are allowed:
-- an **active** device of the same account (after the user compares key fingerprints) — `recovery: false`;
-- the **pending device itself** with `recovery: true`, having unwrapped the recovery-key copies of the space keys from the phrase locally.
+- an **active** device of the same account (after the user compares key fingerprints), supplying the wraps itself;
+- the **pending device itself** with `emailCode` and no wraps, having proved the account's email address; the server re-wraps the account escrow copies for it.
 
 Keys naming a space the user has left, or an epoch that has since rotated, are silently skipped — refetch and retry. → `200` device object.
 
 ### DELETE /devices/{deviceId}
 Revokes: refresh tokens die, space keys wrapped to that device are deleted, and its next request is rejected. Rotate the affected space keys afterwards — revocation cannot make a device forget a key it already holds. → `204`.
+
+### POST /devices/{deviceID}/verify-email/code
+Mails a six-digit code to the account's **own** address so the calling device can let itself in. Reachable by a pending device — that is the only device that needs it — and only for itself: a `deviceID` other than the caller's answers `400`.
+
+```
+→  204
+```
 
 ### GET /keys/{userId}
 The key directory an inviter wraps for. → `{"userId","devices":[{"deviceId","publicKey"}],"recoveryPublicKey"}` — active devices only, public keys only.
@@ -125,21 +151,21 @@ No name is accepted — the space name lives sealed inside its workspace documen
 
 ```json
 { "wrappedKeys": [ { "deviceId": "…", "wrappedKey": "…" },
-                   { "deviceId": null,  "wrappedKey": "<wrapped to recovery key>" } ] }
+                   { "deviceId": null,  "wrappedKey": "<wrapped to account escrow key>" } ] }
 // 201
 { "id": "…", "role": "owner", "keyEpoch": 1, "headSeq": 0, "workspaceVersion": 0 }
 ```
 
-`deviceId: null` means the key is wrapped to the account recovery key. A request whose keys match none of your active devices is rejected — a space nobody can decrypt is never created.
+`deviceId: null` means the key is wrapped to the account escrow key, which is what makes the household recoverable by email later. A request whose keys match none of your active devices is rejected — a space nobody can decrypt is never created.
 
 ### GET /spaces
-Query: `includeRecoveryKeys=true` for the recovery flow.
+The account escrow copy of a space key is never served here, or anywhere. It is sealed to a key only the server can open, so no caller could use it.
 
 ```json
 { "spaces": [ { "id": "…", "role": "owner", "keyEpoch": 2, "headSeq": 1042, "oldestSeq": 1001,
                 "workspaceVersion": 7, "memberCount": 3,
                 "wrappedKey": "<for the calling device, null if not yet granted>",
-                "recoveryWrappedKey": "<only with includeRecoveryKeys=true>" } ] }
+                } ] }
 ```
 
 ### GET /spaces/{id}/members
@@ -392,6 +418,8 @@ Fixed windows, keyed per subject. Exceeding one returns `429` with `Retry-After`
 | Route | Limit | Subject |
 |---|---|---|
 | POST /auth/session | 10 / min | IP |
+| POST /auth/email/code | 15 / hour | IP (plus 5 / hour per address, in the store) |
+| POST /devices/{id}/verify-email/code | 15 / hour | user |
 | POST /auth/refresh | 30 / min | IP |
 | GET …/updates | 120 / min | device |
 | POST …/updates, PUT …/workspace | 60 / min | device |

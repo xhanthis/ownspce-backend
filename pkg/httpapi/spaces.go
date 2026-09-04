@@ -83,9 +83,8 @@ func (s *Server) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 // wrappedKey means this device has not been given the key yet.
 func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 	c := callerFrom(r.Context())
-	includeRecovery := r.URL.Query().Get("includeRecoveryKeys") == "true"
 
-	spaces, err := s.store.ListSpaces(r.Context(), c.UserID, c.DeviceID, includeRecovery)
+	spaces, err := s.store.ListSpaces(r.Context(), c.UserID, c.DeviceID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -94,9 +93,6 @@ func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(spaces))
 	for _, sp := range spaces {
 		item := map[string]any{"id": sp.ID.String(), "role": sp.Role, "keyEpoch": sp.KeyEpoch, "headSeq": sp.HeadSeq, "oldestSeq": sp.OldestSeq, "workspaceVersion": sp.WorkspaceVersion, "memberCount": sp.MemberCount, "wrappedKey": nilIfEmpty(encodeB64(sp.WrappedKey))}
-		if includeRecovery {
-			item["recoveryWrappedKey"] = nilIfEmpty(encodeB64(sp.RecoveryWrappedKey))
-		}
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spaces": out})

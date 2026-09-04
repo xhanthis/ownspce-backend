@@ -37,6 +37,10 @@ var (
 	PublicRead     = Rule{Name: "public_read", Max: 300, Window: time.Minute}
 	ProfileWrite   = Rule{Name: "profile_write", Max: 20, Window: time.Minute}
 	DeviceRegister = Rule{Name: "device_register", Max: 10, Window: time.Hour}
+	// Sending is capped per address inside the store as well; this is the cap on
+	// one machine using many addresses as an outbound mail cannon.
+	EmailCodeSend   = Rule{Name: "email_code_send", Max: 15, Window: time.Hour}
+	EmailCodeVerify = Rule{Name: "email_code_verify", Max: 30, Window: time.Hour}
 
 	AutomationWrite = Rule{Name: "automation_write", Max: 30, Window: time.Hour}
 	AutomationRead  = Rule{Name: "automation_read", Max: 240, Window: time.Minute}

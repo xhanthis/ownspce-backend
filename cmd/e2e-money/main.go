@@ -91,7 +91,7 @@ func main() {
 // provision creates one user per entry, registers its devices in the order
 // given, and prints a bearer token for each. The first device of a user is
 // active by policy and the rest land pending, which is exactly the shape the
-// approval and recovery flows need to be tested against.
+// approval and email-recovery flows need to be tested against.
 func provision(ctx context.Context, st *store.Store, signer *auth.Signer, raw string) {
 	var req provisionRequest
 	if err := json.Unmarshal([]byte(raw), &req); err != nil {

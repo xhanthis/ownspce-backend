@@ -13,6 +13,8 @@ import (
 	"github.com/ownspce/backend/pkg/auth"
 	"github.com/ownspce/backend/pkg/blob"
 	"github.com/ownspce/backend/pkg/config"
+	"github.com/ownspce/backend/pkg/escrow"
+	"github.com/ownspce/backend/pkg/mailer"
 	"github.com/ownspce/backend/pkg/ratelimit"
 	"github.com/ownspce/backend/pkg/store"
 )
@@ -39,6 +41,8 @@ type Server struct {
 	verifier *auth.Verifier
 	signer   *auth.Signer
 	blob     *blob.Client
+	mailer   *mailer.Mailer
+	escrow   *escrow.Keeper
 	uploads  *auth.UploadGrants
 	handler  http.Handler
 }
@@ -52,6 +56,8 @@ func New(cfg *config.Config, st *store.Store) *Server {
 		verifier: auth.NewVerifier(cfg.GoogleClientIDs, cfg.AppleAudiences),
 		signer:   auth.NewSigner(cfg.JWTPrivateKey, cfg.JWTPublicKey),
 		blob:     blob.New(cfg.BlobToken),
+		mailer:   mailer.New(cfg.AutosendAPIKey, cfg.EmailFromAddress, cfg.EmailFromName, cfg.IsProduction()),
+		escrow:   escrow.New(cfg.EscrowMasterKey),
 		uploads:  auth.NewUploadGrants(cfg.JWTPrivateKey),
 	}
 	s.handler = s.routes()
@@ -76,6 +82,7 @@ func (s *Server) routes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.With(s.rateLimit(ratelimit.AuthSession, subjectIP)).Post("/auth/session", s.handleAuthSession)
 			r.With(s.rateLimit(ratelimit.AuthRefresh, subjectIP)).Post("/auth/refresh", s.handleAuthRefresh)
+			r.With(s.rateLimit(ratelimit.EmailCodeSend, subjectIP)).Post("/auth/email/code", s.handleEmailCode)
 			r.With(s.rateLimit(ratelimit.PublicRead, subjectIP)).Get("/users/{username}", s.handleGetUserByUsername)
 			r.With(s.rateLimit(ratelimit.PublicRead, subjectIP)).Get("/shares/{shareID}", s.handlePublicShare)
 			r.With(s.rateLimit(ratelimit.AttachmentWrite, subjectIP)).Put("/spaces/{spaceID}/attachments/{attachmentID}/blob", s.handleUploadAttachmentBlob)
@@ -93,7 +100,7 @@ func (s *Server) routes() http.Handler {
 			r.Get("/devices", s.handleListDevices)
 			r.With(s.rateLimit(ratelimit.DeviceRegister, subjectUser)).Post("/devices", s.handleRegisterDevice)
 			r.Get("/devices/{deviceID}/pending-keys", s.handlePendingKeys)
-			r.With(s.rateLimit(ratelimit.KeyDirectory, subjectUser)).Get("/recovery/spaces", s.handleRecoveryWraps)
+			r.With(s.rateLimit(ratelimit.EmailCodeSend, subjectUser)).Post("/devices/{deviceID}/verify-email/code", s.handleDeviceEmailCode)
 			r.Post("/devices/{deviceID}/approve", s.handleApproveDevice)
 			r.Delete("/devices/{deviceID}", s.handleRevokeDevice)
 

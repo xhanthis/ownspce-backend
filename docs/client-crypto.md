@@ -9,7 +9,7 @@ Reference implementation target: **libsodium** (swift-sodium, lazysodium, libsod
 | Purpose | Primitive | Notes |
 |---|---|---|
 | Device identity | X25519 keypair | Private key never leaves the device (Keychain / Keystore / non-extractable WebCrypto). A new key is a new device. |
-| Recovery identity | BIP39 24-word phrase → seed → X25519 keypair | Deterministic; derivation is normative, see below. Only the public half is uploaded (`PATCH /me` → `recoveryPublicKey`). |
+| Account escrow identity | X25519 keypair minted **server-side**, private half sealed under `ESCROW_MASTER_KEY` | Clients only ever see the public half, still delivered as `recoveryPublicKey` for wire compatibility. Clients **cannot** set it; `PATCH /me` accepts and ignores the field. |
 | Space key | 32-byte random symmetric key | One per space, per epoch. |
 | Payload encryption | XChaCha20-Poly1305 AEAD | 24-byte nonce, 16-byte tag, 40 bytes overhead total. |
 | Key wrapping | `crypto_box_seal` (sealed box) to a recipient X25519 public key | ~80 bytes for a 32-byte key. The server stores these and cannot unwrap them. |
@@ -18,15 +18,9 @@ Reference implementation target: **libsodium** (swift-sodium, lazysodium, libsod
 
 **Nonce**: fresh random 24 bytes per payload, prefixed to the ciphertext. Never reuse a nonce under one space key.
 
-**Recovery key derivation** — normative, because a phrase that derives a different key on iOS than in a browser is a recovery that fails at the only moment it was ever needed:
+**There is no recovery phrase.** It was removed. The account escrow key replaces it: the server mints one per account on first sign-in, wraps nothing itself, and unseals its copy only to re-wrap a space key for a device that has proved the account's email address. Nothing about it is derived on a client, so there is no derivation for clients to agree on.
 
-```
-seed        = BIP39 mnemonicToSeed(phrase, passphrase = "")     # 64 bytes
-private_key = seed[0:32]                                        # X25519 scalar
-public_key  = X25519_base(private_key)
-```
-
-Normalise the phrase before deriving: trim, lowercase, collapse runs of whitespace to single spaces. Validate the BIP39 checksum first and refuse a phrase that fails it — deriving a key from a mistyped word produces something that looks valid and opens nothing.
+The consequence is stated in the API README and must be stated in every client's UI: **an operator with the database and the master key can read any space.** Recovery costs one proven email address, and so does compromise.
 
 ## Padding buckets — mandatory
 
@@ -83,9 +77,9 @@ Decrypted, each change-set is a record list the client merges:
 
 ## Collaboration
 
-**Invite**: `GET /keys/:userId` → wrap the space key with `crypto_box_seal` for **every** listed `publicKey` plus `recoveryPublicKey` → `POST /spaces/:id/members` with those wraps.
+**Invite**: `GET /keys/:userId` → wrap the space key with `crypto_box_seal` for **every** listed `publicKey` plus the account escrow key returned as `recoveryPublicKey` → `POST /spaces/:id/members` with those wraps.
 
-**Remove a member**: `DELETE …/members/:userId`, then generate a new space key, wrap it for every remaining member device **and** their recovery keys, `POST /spaces/:id/keys` with `newEpoch = current + 1`. Then write a fresh snapshot at the new epoch so old-epoch ciphertext ages out of the log. Rotation is refused unless coverage is complete, so build the list from a fresh key-directory read.
+**Remove a member**: `DELETE …/members/:userId`, then generate a new space key, wrap it for every remaining member device **and** their account escrow keys, `POST /spaces/:id/keys` with `newEpoch = current + 1`. Then write a fresh snapshot at the new epoch so old-epoch ciphertext ages out of the log. Rotation is refused unless coverage is complete, so build the list from a fresh key-directory read.
 
 **Verify keys out of band**: show the recipient's public key fingerprint before wrapping. This is the only defence against a malicious server substituting a key in the directory.
 
@@ -93,13 +87,17 @@ Decrypted, each change-set is a record list the client merges:
 
 **Approval by an existing device** — the new device signs in (lands `pending`) and polls `GET /devices` for its own status. An active device sees it, shows the fingerprint for the user to confirm, reads `GET /devices/{id}/pending-keys`, wraps each space key to the new public key, and calls `POST /devices/{id}/approve`.
 
-**Recovery phrase** — the new device signs in (`pending`), the user enters the 24 words, the client derives the recovery keypair, calls **`GET /recovery/spaces`**, unwraps each `recoveryWrappedKey` locally, re-wraps each space key to its own device key, and calls `POST /devices/{id}/approve` on itself with `recovery: true`.
+**Email code** — the new device signs in (`pending`) and calls **`POST /devices/{id}/verify-email/code`**, which mails six digits to the account's own address. It then calls `POST /devices/{id}/approve` on itself with `{"emailCode": "123456"}` and **no wraps of its own** — the server produces them, by unsealing the account escrow key and re-wrapping every space key it opens.
 
-`GET /recovery/spaces` is the one read a pending device may make — restoring from a phrase is precisely the case where no device is trusted — and what it returns is useless without the phrase. `GET /spaces` stays behind device approval.
+A code is single-use, expires in ten minutes, is stored only as SHA-256, and is burnt after five wrong guesses. It is bound to the device that asked for it, so one code cannot admit a different device.
 
-The self-approval is refused unless the re-wrapped keys **cover every space `GET /recovery/spaces` listed**, and unless the account has a recovery key on file at all. The server cannot check a phrase; it can refuse the trivial lie of claiming recovery and supplying nothing, which is what stops a pending device from activating itself.
+`GET /recovery/spaces` is **gone**. The escrow wraps are the server's to hold and are never served to any caller; a route that returned them would hand a pending device the very thing the code exists to gate.
 
-Tell the user plainly during onboarding: **all devices lost + phrase lost = data unrecoverable.** There is no server-side copy of any key.
+**Sign-in also restores.** When the device registering is the account's only live device it is trusted automatically, as any first device is, and the same escrow re-wrap runs during `POST /auth/session`. That is the lost-every-device path: sign in again, and the ledger is there.
+
+A household whose escrow copy the server cannot open — one created before escrow existed — is skipped rather than failing the activation. The device still gets in; that household lands on the awaiting-key screen, where a member who holds the key can hand it over.
+
+Tell the user plainly: **the mailbox on the account is what guards the ledger.**
 
 ## Publishing
 
