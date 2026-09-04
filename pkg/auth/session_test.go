@@ -6,7 +6,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 )
 
@@ -89,5 +91,79 @@ func TestJWKSExposesOnlyPublicKey(t *testing.T) {
 	}
 	if _, leaked := keys[0]["d"]; leaked {
 		t.Error("jwks must never contain the private scalar")
+	}
+}
+
+// TestContinuationAndAccessTokensAreNotInterchangeable is the separation the
+// continuation cookie depends on. One key signs both, so only the audience keeps
+// them apart — and they are not equivalent powers: an access token lives in
+// client memory, while a continuation cookie the browser sends automatically can
+// register a device and collect escrow keys.
+func TestContinuationAndAccessTokensAreNotInterchangeable(t *testing.T) {
+	// Arrange
+	signer := newTestSigner(t)
+	userID, deviceID := uuid.New(), uuid.New()
+
+	access, _, err := signer.Mint(userID, deviceID)
+	if err != nil {
+		t.Fatalf("mint access: %v", err)
+	}
+	continuation, _, err := signer.MintContinuation(userID, deviceID)
+	if err != nil {
+		t.Fatalf("mint continuation: %v", err)
+	}
+
+	// Act & Assert — each opens its own door and neither opens the other's.
+	if _, err := signer.VerifyContinuation(access); err == nil {
+		t.Error("an access token was accepted as a continuation token")
+	}
+	if _, err := signer.Verify(continuation); err == nil {
+		t.Error("a continuation token was accepted as an access token")
+	}
+
+	verified, err := signer.VerifyContinuation(continuation)
+	if err != nil {
+		t.Fatalf("verify continuation: %v", err)
+	}
+	if verified.UserID != userID || verified.DeviceID != deviceID {
+		t.Fatalf("continuation carried %s/%s, want %s/%s", verified.UserID, verified.DeviceID, userID, deviceID)
+	}
+}
+
+// TestExpiredContinuationIsRefused pins the fortnight. The cookie outlives every
+// tab it was minted in, so the expiry is the only thing bounding how long a
+// stale browser can still let a new device into an account.
+func TestExpiredContinuationIsRefused(t *testing.T) {
+	// Arrange — the same claims MintContinuation builds, dated into the past.
+	signer := newTestSigner(t)
+	userID, deviceID := uuid.New(), uuid.New()
+	issued := time.Now().Add(-2 * ContinuationTTL)
+
+	claims := SessionClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    Issuer,
+			Subject:   userID.String(),
+			Audience:  jwt.ClaimStrings{continuationAudience},
+			IssuedAt:  jwt.NewNumericDate(issued),
+			NotBefore: jwt.NewNumericDate(issued),
+			ExpiresAt: jwt.NewNumericDate(issued.Add(ContinuationTTL)),
+			ID:        uuid.NewString(),
+		},
+		DeviceID: deviceID.String(),
+	}
+	token, err := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims).SignedString(signer.private)
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+
+	// Act
+	_, err = signer.VerifyContinuation(token)
+
+	// Assert
+	if err == nil {
+		t.Fatal("a continuation token that expired a fortnight ago was accepted")
+	}
+	if !errors.Is(err, ErrInvalidAccessToken) {
+		t.Fatalf("err = %v, want ErrInvalidAccessToken", err)
 	}
 }

@@ -31,6 +31,10 @@ func (h *harness) continueOn(cookie string, publicKey []byte) *httptest.Response
 	if cookie != "" {
 		req.AddCookie(&http.Cookie{Name: ContinuationCookie, Value: cookie})
 	}
+	// The route is IP rate limited and every httptest request carries the same
+	// address, so a suite that spends a dozen handoffs would throttle itself and
+	// the failure would look like a product bug. See doFrom.
+	req.Header.Set("X-Forwarded-For", fmt.Sprintf("198.51.100.%d", testIP.Add(1)%250+1))
 	rec := httptest.NewRecorder()
 	h.server.ServeHTTP(rec, req)
 	return rec
@@ -254,5 +258,106 @@ func TestContinuingIsIdempotentForTheSameBrowser(t *testing.T) {
 	}
 	if len(devices) != 2 {
 		t.Fatalf("account has %d devices, want 2 (the origin and the sibling surface)", len(devices))
+	}
+}
+
+// TestContinuingRefusesAMalformedDeviceKey keeps a surface from registering a
+// device whose key nothing can wrap to. A 32-byte X25519 key is the one thing
+// the escrow re-wrap needs, so it is checked before anything is created.
+func TestContinuingRefusesAMalformedDeviceKey(t *testing.T) {
+	// Arrange
+	h := newHarness(t)
+	owner := h.signUp("app.ownspce.com")
+	token, _, err := h.server.signer.MintContinuation(owner.UserID, owner.DeviceID)
+	if err != nil {
+		t.Fatalf("mint continuation: %v", err)
+	}
+
+	before, err := h.store.ListDevices(context.Background(), owner.UserID)
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+
+	// Act — an empty key, then valid base64 of the wrong length.
+	empty := h.continueOn(token, nil)
+	wrongSize := h.continueOn(token, randomBytes(t, 16))
+
+	// Assert
+	requireStatus(t, empty, http.StatusBadRequest)
+	requireStatus(t, wrongSize, http.StatusBadRequest)
+
+	after, err := h.store.ListDevices(context.Background(), owner.UserID)
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("a refused call still registered a device: %d then %d", len(before), len(after))
+	}
+}
+
+// TestAContinuationCannotNameSomebodyElsesDevice closes the cross-account hole.
+// The token carries a user and a device independently, so a forged pairing must
+// be caught by the handler rather than trusted because the signature is good.
+func TestAContinuationCannotNameSomebodyElsesDevice(t *testing.T) {
+	// Arrange — two accounts, and a token claiming one user with the other's device.
+	h := newHarness(t)
+	mine := h.signUp("my laptop")
+	theirs := h.signUp("someone else's laptop")
+
+	token, _, err := h.server.signer.MintContinuation(mine.UserID, theirs.DeviceID)
+	if err != nil {
+		t.Fatalf("mint continuation: %v", err)
+	}
+
+	// Act
+	public, _ := deviceKeypair(t)
+	rec := h.continueOn(token, public[:])
+
+	// Assert
+	requireStatus(t, rec, http.StatusUnauthorized)
+
+	for _, id := range []uuid.UUID{mine.UserID, theirs.UserID} {
+		devices, err := h.store.ListDevices(context.Background(), id)
+		if err != nil {
+			t.Fatalf("list devices: %v", err)
+		}
+		if len(devices) != 1 {
+			t.Fatalf("account %s has %d devices, want the 1 it started with", id, len(devices))
+		}
+	}
+}
+
+// TestContinuingOnTheOriginBrowserItselfIsHarmless covers the branch where the
+// device is already active — a surface re-running the handoff on the browser
+// that minted the cookie. It must top up keys rather than re-approve anything.
+func TestContinuingOnTheOriginBrowserItselfIsHarmless(t *testing.T) {
+	// Arrange
+	h := newHarness(t)
+	owner := h.signUp("app.ownspce.com")
+	token, _, err := h.server.signer.MintContinuation(owner.UserID, owner.DeviceID)
+	if err != nil {
+		t.Fatalf("mint continuation: %v", err)
+	}
+
+	// Act — the origin device's own public key, so RegisterDevice returns it.
+	rec := h.continueOn(token, owner.PublicKey)
+
+	// Assert — same device, still active, and no second one created.
+	requireStatus(t, rec, http.StatusOK)
+	body := decodeBody(t, rec)
+	device := body["device"].(map[string]any)
+	if device["id"] != owner.DeviceID.String() {
+		t.Fatalf("device id = %v, want the origin device %s", device["id"], owner.DeviceID)
+	}
+	if device["status"] != "active" {
+		t.Fatalf("status = %v, want active", device["status"])
+	}
+
+	devices, err := h.store.ListDevices(context.Background(), owner.UserID)
+	if err != nil {
+		t.Fatalf("list devices: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Fatalf("account has %d devices, want 1", len(devices))
 	}
 }
