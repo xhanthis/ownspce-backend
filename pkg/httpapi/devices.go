@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -12,14 +14,15 @@ import (
 )
 
 type devicePayload struct {
-	ID         string  `json:"id"`
-	Label      string  `json:"label"`
-	Platform   string  `json:"platform"`
-	PublicKey  string  `json:"publicKey"`
-	Status     string  `json:"status"`
-	CreatedAt  string  `json:"createdAt"`
-	LastSeenAt *string `json:"lastSeenAt"`
-	IsCurrent  bool    `json:"isCurrent"`
+	ID          string  `json:"id"`
+	Label       string  `json:"label"`
+	Platform    string  `json:"platform"`
+	PublicKey   string  `json:"publicKey"`
+	Status      string  `json:"status"`
+	ApprovedVia *string `json:"approvedVia"`
+	CreatedAt   string  `json:"createdAt"`
+	LastSeenAt  *string `json:"lastSeenAt"`
+	IsCurrent   bool    `json:"isCurrent"`
 }
 
 func toDevicePayload(d store.Device, currentID uuid.UUID) devicePayload {
@@ -28,7 +31,7 @@ func toDevicePayload(d store.Device, currentID uuid.UUID) devicePayload {
 		formatted := d.LastSeenAt.UTC().Format(time.RFC3339)
 		lastSeen = &formatted
 	}
-	return devicePayload{ID: d.ID.String(), Label: d.Label, Platform: d.Platform, PublicKey: encodeB64(d.PublicKey), Status: d.Status, CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339), LastSeenAt: lastSeen, IsCurrent: d.ID == currentID}
+	return devicePayload{ID: d.ID.String(), Label: d.Label, Platform: d.Platform, PublicKey: encodeB64(d.PublicKey), Status: d.Status, ApprovedVia: d.ApprovedVia, CreatedAt: d.CreatedAt.UTC().Format(time.RFC3339), LastSeenAt: lastSeen, IsCurrent: d.ID == currentID}
 }
 
 // handleListDevices lists the account's live devices, including pending ones so an
@@ -81,24 +84,30 @@ func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toDevicePayload(*device, callerFrom(r.Context()).DeviceID))
 }
 
-type approveDeviceRequest struct {
-	Recovery    bool `json:"recovery"`
-	WrappedKeys []struct {
-		SpaceID    string `json:"spaceId"`
-		KeyEpoch   int    `json:"keyEpoch"`
-		WrappedKey string `json:"wrappedKey"`
-	} `json:"wrappedKeys"`
+// approveWrappedKey is one space key re-wrapped for the device being approved.
+type approveWrappedKey struct {
+	SpaceID    string `json:"spaceId"`
+	KeyEpoch   int    `json:"keyEpoch"`
+	WrappedKey string `json:"wrappedKey"`
 }
 
-// handleApproveDevice activates a pending device and stores the space keys wrapped
-// to it. Two paths reach here, matching the two recovery routes:
-//   - an already-active device approves the new one after the user compares
-//     fingerprints, and supplies the wraps;
-//   - the pending device itself supplies wraps it produced from the recovery
-//     phrase (recovery: true), having unwrapped the recovery-key copies locally.
+type approveDeviceRequest struct {
+	EmailCode   string              `json:"emailCode"`
+	WrappedKeys []approveWrappedKey `json:"wrappedKeys"`
+}
+
+// handleApproveDevice activates a pending device and gives it the space keys it
+// needs. Two paths reach here:
 //
-// Either way the server only files opaque wrapped keys — it cannot tell whether
-// the wraps are correct, and cannot produce them itself.
+//   - an already-active device approves the new one after the user compares
+//     fingerprints, and supplies the wraps it produced itself;
+//   - the pending device proves the account's email address with a mailed code,
+//     and the server re-wraps the escrow copies for it.
+//
+// The first path is the private one: the server files opaque wraps it cannot
+// read. The second is the one that costs something — the server opens the
+// account's escrow copies to produce the new wrap, which is the deliberate
+// trade that makes a lost-every-device recovery possible at all.
 func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 	targetID, err := parseUUIDParam(chi.URLParam(r, "deviceID"), "deviceId")
 	if err != nil {
@@ -114,11 +123,38 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 
 	c := callerFrom(r.Context())
 	selfApproval := c.DeviceID == targetID
+	via := store.ApprovedViaDevice
+	var escrowKeys []store.WrappedSpaceKey
+
 	switch {
-	case selfApproval && !req.Recovery:
-		writeError(w, errForbidden("approval_required", "a device cannot approve itself unless it proves recovery-phrase possession by supplying re-wrapped keys with recovery: true"))
+	case req.EmailCode != "":
+		if !selfApproval {
+			writeError(w, badRequest("an email code activates only the device it was sent for"))
+			return
+		}
+		if len(req.WrappedKeys) > 0 {
+			writeError(w, badRequest("an email code carries no wrapped keys; the server produces them"))
+			return
+		}
+		if err := s.consumeDeviceEmailCode(r.Context(), c.UserID, targetID, req.EmailCode); err != nil {
+			writeError(w, err)
+			return
+		}
+		device, err := s.store.LiveDevice(r.Context(), targetID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		escrowKeys, err = s.rewrapFromEscrow(r.Context(), c.UserID, device.PublicKey)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		via = store.ApprovedViaEmail
+	case selfApproval:
+		writeError(w, errForbidden("approval_required", "a device cannot approve itself; approve it from a device you already use, or prove this account's email address with a code"))
 		return
-	case !selfApproval && c.Status != store.DeviceStatusActive:
+	case c.Status != store.DeviceStatusActive:
 		writeError(w, errForbidden("device_pending", "only an active device can approve another device"))
 		return
 	}
@@ -151,7 +187,7 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 		approver = &c.DeviceID
 	}
 
-	device, err := s.store.ApproveDevice(r.Context(), c.UserID, targetID, approver, keys)
+	device, err := s.store.ApproveDevice(r.Context(), c.UserID, targetID, approver, via, append(keys, escrowKeys...))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, errNotFound("device not found for this account"))
@@ -161,6 +197,177 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toDevicePayload(*device, c.DeviceID))
+}
+
+// handleDeviceEmailCode mails a code to the account's own address so the device
+// asking can let itself in.
+//
+// Deliberately reachable by a pending device — that is the only device that ever
+// needs it. It sends only to the address already on the account, so a pending
+// device cannot aim mail anywhere, and the code it gets back activates a device
+// without unlocking one byte of anybody's ledger.
+func (s *Server) handleDeviceEmailCode(w http.ResponseWriter, r *http.Request) {
+	targetID, err := parseUUIDParam(chi.URLParam(r, "deviceID"), "deviceId")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	c := callerFrom(r.Context())
+	if targetID != c.DeviceID {
+		writeError(w, badRequest("a device can only request a code for itself"))
+		return
+	}
+	if !s.mailer.Configured() {
+		writeError(w, errUnavailable("email verification is not configured on this deployment"))
+		return
+	}
+
+	user, err := s.store.GetUser(r.Context(), c.UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	device, err := s.store.LiveDevice(r.Context(), targetID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	code, _, err := s.store.IssueEmailCode(r.Context(), user.Email, store.EmailCodePurposeDevice, &c.UserID, &targetID)
+	if err != nil {
+		if errors.Is(err, store.ErrCodeThrottled) {
+			writeError(w, apiError{status: http.StatusTooManyRequests, Code: "rate_limited", Message: "too many codes sent to this address; wait an hour"})
+			return
+		}
+		writeError(w, err)
+		return
+	}
+
+	if err := s.mailer.SendDeviceCode(r.Context(), user.Email, code, device.Label, store.EmailCodeTTL()); err != nil {
+		log.Printf("send device code: %v", err)
+		writeError(w, errUnavailable("could not send the code; try again shortly"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// consumeDeviceEmailCode checks a mailed code against the device it was issued
+// for.
+// Args: ctx, userID, the device being activated, the code as typed
+// Returns: nil when the code was this device's and is now spent, an apiError
+// otherwise
+// Handles: a code minted for a different device of the same account, which is
+// refused rather than accepted — otherwise one code would admit any device
+func (s *Server) consumeDeviceEmailCode(ctx context.Context, userID, deviceID uuid.UUID, code string) error {
+	user, err := s.store.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.store.ConsumeEmailCode(ctx, user.Email, store.EmailCodePurposeDevice, code, &deviceID); err != nil {
+		switch {
+		case errors.Is(err, store.ErrCodeThrottled):
+			return errForbidden("code_exhausted", "too many wrong codes; ask for a new one")
+		case errors.Is(err, store.ErrCodeInvalid):
+			return errUnauthorized("that code is wrong or has expired; ask for a new one")
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
+// rewrapFromEscrow opens the account's escrow copy of every household key and
+// seals each one to a device that has just proved the account's email address.
+//
+// This is the one place in the system where the server touches a key that can
+// open somebody's ledger, and it is the price of the product decision that a
+// person who has lost every device gets their money back. It runs only after a
+// mailed code has been consumed.
+// Args: ctx, userID, the new device's X25519 public key
+// Returns: one wrapped key per household that could be recovered
+// Handles: an escrow wrap sealed to a key this deployment can no longer open
+// (an account that predates escrow), which is skipped rather than failing the
+// whole activation — the device still gets in, and the households it could not
+// be given land on the awaiting-key screen where a member can hand them over
+func (s *Server) rewrapFromEscrow(ctx context.Context, userID uuid.UUID, devicePublicKey []byte) ([]store.WrappedSpaceKey, error) {
+	if !s.escrow.Configured() {
+		return nil, errUnavailable("email recovery is not configured on this deployment")
+	}
+
+	escrowPublic, escrowSealed, err := s.store.EscrowKey(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if len(escrowPublic) == 0 || len(escrowSealed) == 0 {
+		return nil, nil
+	}
+
+	wraps, err := s.store.ListEscrowWraps(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]store.WrappedSpaceKey, 0, len(wraps))
+	for _, wrap := range wraps {
+		rewrapped, err := s.escrow.RewrapTo(escrowSealed, escrowPublic, wrap.WrappedKey, devicePublicKey)
+		if err != nil {
+			log.Printf("escrow rewrap skipped space %s for user %s: %v", wrap.SpaceID, userID, err)
+			continue
+		}
+		out = append(out, store.WrappedSpaceKey{SpaceID: wrap.SpaceID, KeyEpoch: wrap.KeyEpoch, WrappedKey: rewrapped})
+	}
+	return out, nil
+}
+
+// ensureEscrowKey mints the account's escrow key if it has none, and returns the
+// public half either way.
+//
+// Called on every sign-in rather than only at account creation, so accounts made
+// before escrow existed pick one up the next time their owner appears, and so a
+// deployment that had no master key configured heals once it does.
+//
+// The return value matters more than it looks. Clients wrap a new household key
+// to whatever `recoveryPublicKey` the session handed them, so a first session
+// that answered with an empty one would produce a household with no escrow wrap
+// — unrecoverable, which is the single thing this whole path exists to prevent.
+// Args: ctx, userID
+// Returns: the account's escrow public key, or nil when there is none to be had
+// Handles: a deployment with no master key, which returns nil quietly — sign-in
+// must not fail because recovery is unavailable
+func (s *Server) ensureEscrowKey(ctx context.Context, userID uuid.UUID) []byte {
+	if !s.escrow.Configured() {
+		return nil
+	}
+
+	existing, sealedPrivate, err := s.store.EscrowKey(ctx, userID)
+	if err != nil {
+		log.Printf("read escrow key for %s: %v", userID, err)
+		return nil
+	}
+	if len(sealedPrivate) > 0 {
+		return existing
+	}
+
+	public, sealed, err := s.escrow.NewAccountKey()
+	if err != nil {
+		log.Printf("mint escrow key for %s: %v", userID, err)
+		return nil
+	}
+	installed, err := s.store.SetEscrowKey(ctx, userID, public, sealed)
+	if err != nil {
+		log.Printf("store escrow key for %s: %v", userID, err)
+		return nil
+	}
+	if !installed {
+		// Another sign-in won the race; theirs is the key that counts.
+		current, _, err := s.store.EscrowKey(ctx, userID)
+		if err != nil {
+			return nil
+		}
+		return current
+	}
+	return public
 }
 
 // handlePendingKeys tells an approving device exactly which spaces still need a
@@ -237,5 +444,5 @@ func (s *Server) handleKeyDirectory(w http.ResponseWriter, r *http.Request) {
 	for _, d := range dir.Devices {
 		devices = append(devices, map[string]string{"deviceId": d.ID.String(), "publicKey": encodeB64(d.PublicKey)})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"userId": userID.String(), "devices": devices, "recoveryPublicKey": encodeB64(dir.RecoveryPublicKey)})
+	writeJSON(w, http.StatusOK, map[string]any{"userId": userID.String(), "devices": devices, "recoveryPublicKey": encodeB64(dir.EscrowPublicKey)})
 }

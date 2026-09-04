@@ -121,3 +121,25 @@ func (c *Client) Delete(ctx context.Context, urls []string) error {
 	}
 	return nil
 }
+
+// Get fetches an object's bytes by its URL.
+// Args: ctx, url (as returned by Put)
+// Returns: the stored bytes, error
+// Handles: an object deleted out from under a row (non-2xx), and a body larger
+// than the caller's ceiling, which is capped rather than streamed unbounded
+func (c *Client) Get(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("blob get: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("blob get: status %d", resp.StatusCode)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, maxBytes))
+}

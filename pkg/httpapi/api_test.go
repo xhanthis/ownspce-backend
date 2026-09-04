@@ -265,7 +265,7 @@ func TestSecondDeviceIsPendingUntilApproved(t *testing.T) {
 		t.Errorf("code = %q, want device_pending", code)
 	}
 
-	selfApprove := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", second, map[string]any{"recovery": false, "wrappedKeys": []any{}})
+	selfApprove := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", second, map[string]any{"wrappedKeys": []any{}})
 	requireStatus(t, selfApprove, http.StatusForbidden)
 	if code := errorCode(t, selfApprove); code != "approval_required" {
 		t.Errorf("code = %q, want approval_required", code)
@@ -686,4 +686,63 @@ func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 		rec := h.do(http.MethodGet, path, nil, nil)
 		requireStatus(t, rec, http.StatusUnauthorized)
 	}
+}
+
+// TestEscrowWrapsNeverLeaveTheServer pins the property that makes escrow
+// tolerable at all. The account's copy of a household key is readable by the
+// server — that is the deal — but it must never be servable to a caller, or a
+// pending device would be handed the very thing the email code is supposed to
+// gate. The endpoint that used to serve them, back when the copy was sealed to
+// a phrase only the person held, is gone.
+func TestEscrowWrapsNeverLeaveTheServer(t *testing.T) {
+	// Arrange
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	h.escrowPublicKey(t, owner.UserID)
+	spaceID := h.createSpaceWithEscrow(owner)
+
+	pending := h.addDevice(owner.UserID, "a laptop nobody has let in")
+	if pending.Status != "pending" {
+		t.Fatalf("second device status = %q, want pending", pending.Status)
+	}
+
+	// Act — the removed route, and the query that used to smuggle the same bytes
+	// out through the ordinary spaces list.
+	removed := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
+	viaQuery := h.do(http.MethodGet, "/v1/spaces?includeRecoveryKeys=true", owner, nil)
+	spaces := h.do(http.MethodGet, "/v1/spaces", pending, nil)
+
+	// Assert — no route serves the escrow copy, and the ordinary list is still
+	// behind device approval.
+	requireStatus(t, removed, http.StatusNotFound)
+	requireStatus(t, spaces, http.StatusForbidden)
+
+	requireStatus(t, viaQuery, http.StatusOK)
+	for _, raw := range decodeBody(t, viaQuery)["spaces"].([]any) {
+		if _, leaked := raw.(map[string]any)["recoveryWrappedKey"]; leaked {
+			t.Fatal("GET /spaces still serves the account escrow wrap")
+		}
+	}
+
+	// The wrap does exist; it is simply the server's to hold.
+	var escrowWraps int
+	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM space_keys WHERE space_id = $1 AND device_id IS NULL", spaceID).Scan(&escrowWraps); err != nil {
+		t.Fatalf("count escrow wraps: %v", err)
+	}
+	if escrowWraps != 1 {
+		t.Fatalf("escrow wraps = %d, want 1", escrowWraps)
+	}
+}
+
+// createSpaceWithEscrow creates a space whose key is wrapped for the actor's
+// device and for their account escrow key.
+func (h *harness) createSpaceWithEscrow(a *actor) string {
+	h.t.Helper()
+	body := map[string]any{"wrappedKeys": []map[string]any{
+		{"deviceId": a.DeviceID.String(), "wrappedKey": wrappedKey(h.t)},
+		{"wrappedKey": wrappedKey(h.t)},
+	}}
+	rec := h.do(http.MethodPost, "/v1/spaces", a, body)
+	requireStatus(h.t, rec, http.StatusCreated)
+	return decodeBody(h.t, rec)["id"].(string)
 }

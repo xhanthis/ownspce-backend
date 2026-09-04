@@ -32,13 +32,28 @@ Authenticated routes take `Authorization: Bearer <accessToken>`. Errors are unif
 
 ## Auth & profile
 
-### POST /auth/session
-Public. Verifies a Google or Apple ID token, creates the user on first call, and registers the calling device's public key in the same step.
+### POST /auth/email/code
+Public. Mails a six-digit sign-in code. Always `204`, whether or not the address has an account — the endpoint is deliberately not a membership oracle. `503 unavailable` only when the deployment has no mail provider.
 
 ```json
-// request
+{ "email": "r@x.com" }   →  204
+```
+
+A code lasts ten minutes, works once, is stored only as SHA-256, and is burnt after five wrong guesses. An address may be sent five codes an hour; beyond that the response is still `204` and no mail is sent.
+
+### POST /auth/session
+Public. Verifies a Google or Apple ID token — or a code this API mailed — creates the user on first call, and registers the calling device's public key in the same step. All three providers resolve to one account per email address, so a Google user who later signs in by code lands on the account they already have.
+
+```json
+// request, provider "google" or "apple"
 { "provider": "google",
   "idToken": "eyJ...",
+  "device": { "label": "MacBook", "platform": "macos", "publicKey": "<base64 32B X25519>" } }
+
+// request, provider "email"
+{ "provider": "email",
+  "email": "r@x.com",
+  "code": "123456",
   "device": { "label": "MacBook", "platform": "macos", "publicKey": "<base64 32B X25519>" } }
 
 // 200
@@ -51,6 +66,10 @@ Public. Verifies a Google or Apple ID token, creates the user on first call, and
 ```
 
 `platform` ∈ `ios | macos | android | windows | linux | web | ""`. The **first** live device of an account is `active`; every later one is `pending` until approved (see device approval). A pending device gets a session so it can poll for approval, but every data route answers `403 device_pending`.
+
+A first device that holds no keys is handed the account's escrow copies during this call. That is the lost-every-device path: revoke or lose them all, sign in again, and the replacement device is both trusted and able to read.
+
+A wrong or expired code answers `401`; a code burnt by five wrong guesses answers `403 code_exhausted`.
 
 ### POST /auth/refresh
 Public. Rotates the refresh token. Replaying a spent token revokes the entire family — the client must sign in again.
@@ -100,18 +119,25 @@ Tells an approving device exactly what to wrap. → `{"deviceId","publicKey","sp
 Activates a pending device and files the space keys wrapped to its public key.
 
 ```json
-{ "recovery": false,
+{ "emailCode": "",
   "wrappedKeys": [ { "spaceId": "…", "keyEpoch": 2, "wrappedKey": "<base64 sealed box>" } ] }
 ```
 
 Two callers are allowed:
-- an **active** device of the same account (after the user compares key fingerprints) — `recovery: false`;
-- the **pending device itself** with `recovery: true`, having unwrapped the recovery-key copies of the space keys from the phrase locally.
+- an **active** device of the same account (after the user compares key fingerprints), supplying the wraps itself;
+- the **pending device itself** with `emailCode` and no wraps, having proved the account's email address; the server re-wraps the account escrow copies for it.
 
 Keys naming a space the user has left, or an epoch that has since rotated, are silently skipped — refetch and retry. → `200` device object.
 
 ### DELETE /devices/{deviceId}
 Revokes: refresh tokens die, space keys wrapped to that device are deleted, and its next request is rejected. Rotate the affected space keys afterwards — revocation cannot make a device forget a key it already holds. → `204`.
+
+### POST /devices/{deviceID}/verify-email/code
+Mails a six-digit code to the account's **own** address so the calling device can let itself in. Reachable by a pending device — that is the only device that needs it — and only for itself: a `deviceID` other than the caller's answers `400`.
+
+```
+→  204
+```
 
 ### GET /keys/{userId}
 The key directory an inviter wraps for. → `{"userId","devices":[{"deviceId","publicKey"}],"recoveryPublicKey"}` — active devices only, public keys only.
@@ -125,21 +151,21 @@ No name is accepted — the space name lives sealed inside its workspace documen
 
 ```json
 { "wrappedKeys": [ { "deviceId": "…", "wrappedKey": "…" },
-                   { "deviceId": null,  "wrappedKey": "<wrapped to recovery key>" } ] }
+                   { "deviceId": null,  "wrappedKey": "<wrapped to account escrow key>" } ] }
 // 201
 { "id": "…", "role": "owner", "keyEpoch": 1, "headSeq": 0, "workspaceVersion": 0 }
 ```
 
-`deviceId: null` means the key is wrapped to the account recovery key. A request whose keys match none of your active devices is rejected — a space nobody can decrypt is never created.
+`deviceId: null` means the key is wrapped to the account escrow key, which is what makes the household recoverable by email later. A request whose keys match none of your active devices is rejected — a space nobody can decrypt is never created.
 
 ### GET /spaces
-Query: `includeRecoveryKeys=true` for the recovery flow.
+The account escrow copy of a space key is never served here, or anywhere. It is sealed to a key only the server can open, so no caller could use it.
 
 ```json
 { "spaces": [ { "id": "…", "role": "owner", "keyEpoch": 2, "headSeq": 1042, "oldestSeq": 1001,
                 "workspaceVersion": 7, "memberCount": 3,
                 "wrappedKey": "<for the calling device, null if not yet granted>",
-                "recoveryWrappedKey": "<only with includeRecoveryKeys=true>" } ] }
+                } ] }
 ```
 
 ### GET /spaces/{id}/members
@@ -227,6 +253,48 @@ The sealed Tier 1 document. → `{"version","keyEpoch","ciphertext","updatedAt"}
 
 ---
 
+## Shares
+
+Read-only public links. A share does not hand out the space key: the client mints a fresh key for this one snapshot, seals the page with it, uploads the ciphertext here, and puts the key in the URL **fragment** (`/s/<id>#<key>`). Browsers never send a fragment — not in the request line, not in `Referer` — so the link works while this server still cannot read what it stores.
+
+The share id is minted by the client and is the capability in the link. It cannot be rebound: once an id belongs to a space, another space writing to it is `403 share_forbidden`.
+
+### PUT /spaces/{id}/shares/{shareId}
+Editor role. Raw ciphertext body (not JSON), capped at 2 MiB and required to begin with the `OSA1` container header. Republishing overwrites in place, so a link a reader already holds keeps resolving. → `200 {"shareId"}`.
+
+### DELETE /spaces/{id}/shares/{shareId}
+Editor role. Destroys the ciphertext, which is the real revocation — someone who already opened the link keeps what they read; what this guarantees is that nobody can fetch it again. → `204`, and `204` again if it was already gone.
+
+### GET /shares/{shareId}
+**Unauthenticated**, rate limited as a public read. → `200` with `application/octet-stream` and `X-Robots-Tag: noindex, nofollow`. A revoked link and one that never existed answer identically (`404`), and no response header carries the originating space.
+
+---
+
+## Attachments
+
+Descriptors sync inside the page's own ciphertext; bytes do not. The server stores a sealed blob and a byte count, and never learns the file name, type, or true length.
+
+The bytes cannot travel through a JSON request — a sealed photo runs to megabytes — and the uploading fetch carries no `Authorization` header. So the API authorizes the upload, then hands back a URL that carries its own permission: an HMAC grant binding exactly one space, one attachment id, and one byte count, valid for 15 minutes. Altering any of the three invalidates it.
+
+### POST /spaces/{id}/attachments/{attachmentId}/upload-url
+Editor role. `{"size": <sealed bytes>}` → `200 {"url","expiresIn"}`. `413` outside 1..12 MiB, `503` when no blob store is configured.
+
+### PUT /spaces/{id}/attachments/{attachmentId}/blob?size=&exp=&sig=
+**No session** — the grant in the query string is the whole authorization, and it is checked against the body length actually received. Refused requests are judged before storage availability, so a forged URL learns nothing about the service. → `201 {"size"}`, `403 grant_invalid` on any mismatch or expiry.
+
+The row is written here, immediately after the bytes land: it can never point at an object that does not exist, and no state has to survive between two requests that may reach different instances.
+
+### POST /spaces/{id}/attachments/{attachmentId}
+Editor role. `{"size"}` → `200 {"size"}` — the client's checkpoint, re-checking the space role and reporting the size actually stored. `409 upload_missing` when the bytes were never uploaded.
+
+### GET /spaces/{id}/attachments/{attachmentId}
+Viewer role. → `200` with `application/octet-stream`. Proxied rather than redirected, so the bearer-readable object URL never reaches the client.
+
+### DELETE /spaces/{id}/attachments/{attachmentId}
+Editor role. Removes the row and sweeps the object behind it. → `204`.
+
+---
+
 ## Publishing
 
 The single deliberate exception to zero knowledge: the client decrypts the page and uploads plaintext, because the user asked for it to be public.
@@ -266,6 +334,83 @@ Public abuse intake. `{"reason":"…","details":"…"}` → `202 {"status":"rece
 
 ---
 
+## Automations
+
+Hands a task to a Claude Code agent running on the user's own Mac, which opens a
+pull request. Two auth planes: the user plane below uses the normal access token,
+while `/daemon/*` uses an opaque daemon token (`ospd_` + 43 url-safe characters,
+stored only as SHA-256, revocable, no expiry).
+
+**This is the one part of the API that stores plaintext user content.** A run
+carries the task title and the instructions the user typed, because the agent has
+to read them. Nothing else about the page is sent, and the web app makes the
+trade explicit before queueing.
+
+### POST /automations/runs
+`{pageId, taskId, taskTitle, instructions, repo, baseBranch}` → `201 {run}`. The
+branch is computed server-side and stored. `baseBranch: ""` takes the connected
+repo's default. `403 repo_not_connected` when no live daemon reports the repo;
+`409 run_active` when that task already has a queued or running run.
+
+### GET /automations/runs?pageId=&limit=&cursor=
+`200 {runs, nextCursor}`, newest first. `pageId` is optional — omitted lists every
+run for the user, which is what the global Automations view renders. `limit`
+defaults to 50, clamps to 100, and never errors. `cursor` is opaque; malformed
+values are rejected rather than silently restarting the walk. List rows omit
+`instructions` and `progressLog`.
+
+### GET /automations/runs/{runId}
+`200 {run}` including `instructions` and `progressLog`. `404` for another user's
+run, which is never distinguished from a run that does not exist.
+
+### POST /automations/runs/{runId}/cancel
+`200 {run}`. `409 run_not_active` once the run is terminal. A daemon holding it
+learns within about five seconds and stops without pushing.
+
+### POST /automations/runs/{runId}/retry
+`201 {run}` — a new row copying the payload; the original is kept for history.
+
+### GET /automations/status
+`200 {online, daemons, repos}`. `repos` is the deduplicated union across live
+daemons and is exactly what the repo picker renders. Liveness is computed
+server-side (`lastSeenAt` within 120s).
+
+### POST /automations/daemons
+`{name}` → `201 {token, daemon}`. **The plaintext token is returned once and is
+never recoverable.**
+
+### GET /automations/daemons · DELETE /automations/daemons/{daemonId}
+List, and revoke (`204`, idempotent). Revoking never deletes run history; runs the
+daemon held are reclaimed within ten minutes.
+
+### POST /daemon/register
+`{name, version, repos}` → `200 {daemon}`. Replaces the daemon's whole repo set
+and stamps liveness. At most 50 repos, no duplicates.
+
+### POST /daemon/runs/claim
+`200 {run}` or `204` when idle. Reclaims runs abandoned for more than ten minutes,
+then claims the oldest queued run **whose repo this daemon reported**, under
+`FOR UPDATE SKIP LOCKED` so concurrent daemons never take the same run.
+
+### PATCH /daemon/runs/{runId}/progress
+`{phase, progressLog, tokensUsed}` → `200 {accepted, status, phase, attempts, maxAttempts}`.
+Heartbeat and cancel channel in one. It answers `200` even when the guard fails:
+`accepted:false` means the run was canceled, reclaimed or reassigned and the
+daemon must abort. A `409` here would be indistinguishable from a transport error.
+
+### POST /daemon/runs/{runId}/complete · /fail · /release
+`complete` takes `{prUrl, tokensUsed}` and parks the run at `pr_ready`. `fail`
+takes `outcome ∈ {auth, error, max_turns, checks}` — `auth` parks immediately
+without spending an attempt, the rest re-queue until `maxAttempts`. `release`
+takes `outcome ∈ {quota, deadline}` and re-queues without spending an attempt.
+All three return `409 run_conflict` if the daemon no longer owns the run.
+
+### Status codes
+Adds `403 repo_not_connected`, `409 run_active`, `409 run_not_active`, and
+`409 run_conflict` to the shared table.
+
+---
+
 ## Rate limits
 
 Fixed windows, keyed per subject. Exceeding one returns `429` with `Retry-After`.
@@ -273,6 +418,8 @@ Fixed windows, keyed per subject. Exceeding one returns `429` with `Retry-After`
 | Route | Limit | Subject |
 |---|---|---|
 | POST /auth/session | 10 / min | IP |
+| POST /auth/email/code | 15 / hour | IP (plus 5 / hour per address, in the store) |
+| POST /devices/{id}/verify-email/code | 15 / hour | user |
 | POST /auth/refresh | 30 / min | IP |
 | GET …/updates | 120 / min | device |
 | POST …/updates, PUT …/workspace | 60 / min | device |
@@ -282,4 +429,11 @@ Fixed windows, keyed per subject. Exceeding one returns `429` with `Retry-After`
 | PATCH /me | 20 / min | user |
 | POST /devices | 10 / hour | user |
 | POST /publish, /publish/assets | 5 / hour | user |
-| public reads | 300 / min | IP |
+| public reads (incl. GET /shares/:id) | 300 / min | IP |
+| PUT …/shares/:id, DELETE …/shares/:id | 60 / hour | user |
+| attachment upload-url, commit, delete | 120 / hour | user |
+| PUT …/attachments/:id/blob | 120 / hour | IP |
+| automation writes (queue, cancel, retry, revoke daemon) | 30 / hour | user |
+| automation reads (runs, status, daemons) | 240 / min | user |
+| POST /automations/daemons | 5 / hour | user |
+| all /daemon/* routes | 120 / min | daemon |

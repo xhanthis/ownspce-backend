@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/ownspce/backend/pkg/seal"
 	"github.com/ownspce/backend/pkg/store"
 )
 
@@ -24,17 +23,19 @@ func (s *Server) handleGetMe(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchMeRequest struct {
-	Name              *string `json:"name"`
-	Username          *string `json:"username"`
-	AvatarURL         *string `json:"avatarUrl"`
-	Theme             *string `json:"theme"`
-	Font              *string `json:"font"`
-	Palette           *string `json:"palette"`
-	Language          *string `json:"language"`
-	NotifyEmail       *bool   `json:"notifyEmail"`
-	NotifyPush        *bool   `json:"notifyPush"`
-	StreakCount       *int    `json:"streakCount"`
-	StreakUpdatedOn   *string `json:"streakUpdatedOn"`
+	Name            *string `json:"name"`
+	Username        *string `json:"username"`
+	AvatarURL       *string `json:"avatarUrl"`
+	Theme           *string `json:"theme"`
+	Font            *string `json:"font"`
+	Palette         *string `json:"palette"`
+	Language        *string `json:"language"`
+	NotifyEmail     *bool   `json:"notifyEmail"`
+	NotifyPush      *bool   `json:"notifyPush"`
+	StreakCount     *int    `json:"streakCount"`
+	StreakUpdatedOn *string `json:"streakUpdatedOn"`
+	// Accepted for compatibility with clients that still generate a phrase, and
+	// deliberately never applied. See handlePatchMe.
 	RecoveryPublicKey *string `json:"recoveryPublicKey"`
 }
 
@@ -92,18 +93,11 @@ func (s *Server) handlePatchMe(w http.ResponseWriter, r *http.Request) {
 		}
 		patch.StreakUpdatedOn = &day
 	}
-	if req.RecoveryPublicKey != nil {
-		key, err := decodeB64(*req.RecoveryPublicKey, "recoveryPublicKey")
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if err := seal.ValidatePublicKey(key); err != nil {
-			writeError(w, badRequest("%v", err))
-			return
-		}
-		patch.RecoveryPublicKey = key
-	}
+	// recoveryPublicKey is accepted and ignored. Older clients still send one
+	// after generating a phrase; the account key is now minted and held by the
+	// server, and letting a client overwrite it would let anyone who reached
+	// this endpoint swap the escrow key for their own and be handed every
+	// household key on the next recovery.
 
 	user, err := s.store.UpdateProfile(r.Context(), callerFrom(r.Context()).UserID, patch)
 	if err != nil {

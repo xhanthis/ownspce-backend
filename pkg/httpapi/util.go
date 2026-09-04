@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -21,6 +22,18 @@ func isOwnBlobURL(raw string) bool {
 		return false
 	}
 	return strings.HasSuffix(parsed.Host, blobHostSuffix)
+}
+
+// emailPattern is a deliberately loose shape check. Proving an address exists is
+// the code's job; this only rejects what could never be one, so a valid address
+// with an unusual local part is never turned away at the door.
+var emailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s.]+(\.[^@\s.]+)+$`)
+
+// validEmail reports whether a string is plausibly an email address, under the
+// 254-byte limit RFC 5321 puts on one.
+func validEmail(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	return len(trimmed) <= 254 && emailPattern.MatchString(trimmed)
 }
 
 // oneOf reports whether value is one of the allowed enum members. Used to reject

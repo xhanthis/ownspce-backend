@@ -67,3 +67,31 @@ func ValidateWrappedKey(b []byte) error {
 	}
 	return nil
 }
+
+// MoneyBuckets are the padding buckets for a Kosh ledger record.
+//
+// The Tier 2 ladder starts at 1 KiB, which is right for a note body and wrong
+// for a ledger row: an expense is a handful of numbers and a short note, and a
+// household with five thousand entries would pay five megabytes to say so. The
+// money ladder starts at 256 bytes instead — still far above the entropy of a
+// single entry, so the stored length keeps revealing nothing, and small enough
+// that a year of a family's spending fits in one page load.
+var MoneyBuckets = []int{256, 1024, 4096}
+
+// MaxMoneyCiphertext is the largest sealed money record accepted.
+var MaxMoneyCiphertext = MoneyBuckets[len(MoneyBuckets)-1] + AEADOverhead
+
+// ValidateMoneyCiphertext checks a sealed money record against the money ladder.
+// Args: b (ciphertext bytes)
+// Returns: the bucket size it matched, or ErrBucketViolation / ErrEmpty
+func ValidateMoneyCiphertext(b []byte) (int, error) {
+	if len(b) == 0 {
+		return 0, ErrEmpty
+	}
+	for _, bucket := range MoneyBuckets {
+		if len(b) == bucket+AEADOverhead {
+			return bucket, nil
+		}
+	}
+	return 0, fmt.Errorf("%w: got %d bytes, want one of %v plus %d", ErrBucketViolation, len(b), MoneyBuckets, AEADOverhead)
+}

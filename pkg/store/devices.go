@@ -17,26 +17,35 @@ const (
 	// DevicePlatformWeb is the only platform that gets the short session window;
 	// see refreshTTLFor.
 	DevicePlatformWeb = "web"
+
+	// How a device came to be trusted. Recorded because the answer changes what
+	// a member should think before handing it a space key: a device let in by
+	// email proved control of an inbox and nothing more.
+	ApprovedViaFirst    = "first"
+	ApprovedViaDevice   = "device"
+	ApprovedViaRecovery = "recovery"
+	ApprovedViaEmail    = "email"
 )
 
 // Device holds a device's Tier 0 record. PublicKey is an X25519 public key; the
 // matching private key never reaches the server.
 type Device struct {
-	ID         uuid.UUID
-	UserID     uuid.UUID
-	Label      string
-	Platform   string
-	PublicKey  []byte
-	Status     string
-	CreatedAt  time.Time
-	LastSeenAt *time.Time
+	ID          uuid.UUID
+	UserID      uuid.UUID
+	Label       string
+	Platform    string
+	PublicKey   []byte
+	Status      string
+	ApprovedVia *string
+	CreatedAt   time.Time
+	LastSeenAt  *time.Time
 }
 
-const deviceColumns = `id, user_id, label, platform, public_key, status, created_at, last_seen_at`
+const deviceColumns = `id, user_id, label, platform, public_key, status, approved_via, created_at, last_seen_at`
 
 func scanDevice(row pgx.Row) (*Device, error) {
 	var d Device
-	if err := row.Scan(&d.ID, &d.UserID, &d.Label, &d.Platform, &d.PublicKey, &d.Status, &d.CreatedAt, &d.LastSeenAt); err != nil {
+	if err := row.Scan(&d.ID, &d.UserID, &d.Label, &d.Platform, &d.PublicKey, &d.Status, &d.ApprovedVia, &d.CreatedAt, &d.LastSeenAt); err != nil {
 		if noRows(err) {
 			return nil, ErrNotFound
 		}
@@ -68,11 +77,14 @@ func (s *Store) RegisterDevice(ctx context.Context, userID uuid.UUID, label, pla
 			return err
 		}
 		status := DeviceStatusPending
+		var via *string
 		if liveCount == 0 {
 			status = DeviceStatusActive
+			first := ApprovedViaFirst
+			via = &first
 		}
 
-		device, err = scanDevice(tx.QueryRow(ctx, "INSERT INTO devices (user_id, label, platform, public_key, status) VALUES ($1, $2, $3, $4, $5) RETURNING "+deviceColumns, userID, label, platform, publicKey, status))
+		device, err = scanDevice(tx.QueryRow(ctx, "INSERT INTO devices (user_id, label, platform, public_key, status, approved_via) VALUES ($1, $2, $3, $4, $5, $6) RETURNING "+deviceColumns, userID, label, platform, publicKey, status, via))
 		return err
 	})
 	return device, err
@@ -94,7 +106,7 @@ func (s *Store) ListDevices(ctx context.Context, userID uuid.UUID) ([]Device, er
 	var out []Device
 	for rows.Next() {
 		var d Device
-		if err := rows.Scan(&d.ID, &d.UserID, &d.Label, &d.Platform, &d.PublicKey, &d.Status, &d.CreatedAt, &d.LastSeenAt); err != nil {
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Label, &d.Platform, &d.PublicKey, &d.Status, &d.ApprovedVia, &d.CreatedAt, &d.LastSeenAt); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -109,6 +121,15 @@ func (s *Store) TouchDevice(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+// CountDeviceKeys reports how many space keys are filed for a device, which is
+// how the sign-in path tells an active device that can read something from one
+// that got in but holds nothing.
+func (s *Store) CountDeviceKeys(ctx context.Context, deviceID uuid.UUID) (int, error) {
+	var count int
+	err := s.pool.QueryRow(ctx, "SELECT count(*) FROM space_keys WHERE device_id = $1", deviceID).Scan(&count)
+	return count, err
+}
+
 // WrappedSpaceKey is a space key sealed to one recipient public key. The server
 // stores it and can never unwrap it.
 type WrappedSpaceKey struct {
@@ -120,12 +141,13 @@ type WrappedSpaceKey struct {
 // ApproveDevice activates a pending device and stores the space keys wrapped to
 // its public key, in one transaction.
 // Args: ctx, userID, deviceID (the pending device), approverDeviceID (nil for the
-// recovery-phrase path), keys (wrapped space keys)
+// recovery-phrase and email paths), via (how it was let in), keys (wrapped space
+// keys)
 // Returns: activated device, error
 // Handles: device not found or owned by another user (ErrNotFound), already-active
 // device (idempotent), keys for spaces the user no longer belongs to or whose
 // epoch has since rotated (silently skipped so the client retries with fresh keys)
-func (s *Store) ApproveDevice(ctx context.Context, userID, deviceID uuid.UUID, approverDeviceID *uuid.UUID, keys []WrappedSpaceKey) (*Device, error) {
+func (s *Store) ApproveDevice(ctx context.Context, userID, deviceID uuid.UUID, approverDeviceID *uuid.UUID, via string, keys []WrappedSpaceKey) (*Device, error) {
 	var device *Device
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		d, err := scanDevice(tx.QueryRow(ctx, "SELECT "+deviceColumns+" FROM devices WHERE id = $1 AND user_id = $2 AND status <> 'revoked' FOR UPDATE", deviceID, userID))
@@ -150,7 +172,7 @@ func (s *Store) ApproveDevice(ctx context.Context, userID, deviceID uuid.UUID, a
 			}
 		}
 
-		device, err = scanDevice(tx.QueryRow(ctx, "UPDATE devices SET status = 'active', approved_by_device = COALESCE($2, approved_by_device) WHERE id = $1 RETURNING "+deviceColumns, d.ID, approverDeviceID))
+		device, err = scanDevice(tx.QueryRow(ctx, "UPDATE devices SET status = 'active', approved_by_device = COALESCE($2, approved_by_device), approved_via = COALESCE(approved_via, $3) WHERE id = $1 RETURNING "+deviceColumns, d.ID, approverDeviceID, via))
 		return err
 	})
 	return device, err
@@ -189,9 +211,9 @@ func (s *Store) RevokeDevice(ctx context.Context, userID, deviceID uuid.UUID) er
 // KeyDirectory is the public half of a user's encryption identity: the per-device
 // X25519 public keys an inviter wraps a space key for, plus the recovery public key.
 type KeyDirectory struct {
-	UserID            uuid.UUID
-	Devices           []Device
-	RecoveryPublicKey []byte
+	UserID          uuid.UUID
+	Devices         []Device
+	EscrowPublicKey []byte
 }
 
 // PublicKeyDirectory returns a user's active device public keys and recovery key.
@@ -199,7 +221,7 @@ type KeyDirectory struct {
 // Returns: directory (active devices only), error (ErrNotFound for unknown user)
 func (s *Store) PublicKeyDirectory(ctx context.Context, userID uuid.UUID) (*KeyDirectory, error) {
 	dir := &KeyDirectory{UserID: userID}
-	if err := s.pool.QueryRow(ctx, "SELECT recovery_public_key FROM users WHERE id = $1", userID).Scan(&dir.RecoveryPublicKey); err != nil {
+	if err := s.pool.QueryRow(ctx, "SELECT recovery_public_key FROM users WHERE id = $1", userID).Scan(&dir.EscrowPublicKey); err != nil {
 		if noRows(err) {
 			return nil, ErrNotFound
 		}

@@ -1,0 +1,10 @@
+CREATE TABLE money_vaults (space_id uuid PRIMARY KEY REFERENCES spaces(id) ON DELETE CASCADE, key_epoch int NOT NULL CHECK (key_epoch > 0), version bigint NOT NULL DEFAULT 1 CHECK (version > 0), ciphertext bytea NOT NULL CHECK (octet_length(ciphertext) BETWEEN 296 AND 4136), created_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE money_entries (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), space_id uuid NOT NULL REFERENCES spaces(id) ON DELETE CASCADE, client_id uuid NOT NULL, occurred_on date NOT NULL, key_epoch int NOT NULL CHECK (key_epoch > 0), ciphertext bytea NOT NULL CHECK (octet_length(ciphertext) BETWEEN 296 AND 4136), created_by uuid REFERENCES users(id) ON DELETE SET NULL, updated_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), deleted_at timestamptz);
+CREATE UNIQUE INDEX uq_money_entries_client ON money_entries (space_id, client_id);
+CREATE INDEX idx_money_entries_feed ON money_entries (space_id, occurred_on DESC, id DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_money_entries_changed ON money_entries (space_id, updated_at);
+
+CREATE TABLE money_objects (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), space_id uuid NOT NULL REFERENCES spaces(id) ON DELETE CASCADE, kind text NOT NULL CHECK (kind IN ('category','account','budget','bill','holding')), client_id uuid NOT NULL, sort_order int NOT NULL DEFAULT 0, key_epoch int NOT NULL CHECK (key_epoch > 0), ciphertext bytea NOT NULL CHECK (octet_length(ciphertext) BETWEEN 296 AND 4136), created_by uuid REFERENCES users(id) ON DELETE SET NULL, updated_by uuid REFERENCES users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), deleted_at timestamptz);
+CREATE UNIQUE INDEX uq_money_objects_client ON money_objects (space_id, kind, client_id);
+CREATE INDEX idx_money_objects_kind ON money_objects (space_id, kind, sort_order, id) WHERE deleted_at IS NULL;

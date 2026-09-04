@@ -10,12 +10,19 @@ import (
 )
 
 type Config struct {
-	DatabaseURL      string
-	JWTPrivateKey    ed25519.PrivateKey
-	JWTPublicKey     ed25519.PublicKey
-	GoogleClientIDs  []string
-	AppleAudiences   []string
-	BlobToken        string
+	DatabaseURL     string
+	JWTPrivateKey   ed25519.PrivateKey
+	JWTPublicKey    ed25519.PublicKey
+	GoogleClientIDs []string
+	AppleAudiences  []string
+	BlobToken       string
+	AutosendAPIKey  string
+	// EscrowMasterKey seals the per-account escrow private keys at rest. Without
+	// it the API runs, but nobody can recover an account by email — which is a
+	// refusal rather than a silent downgrade.
+	EscrowMasterKey  []byte
+	EmailFromAddress string
+	EmailFromName    string
 	PublicSiteOrigin string
 	AllowedOrigins   []string
 	Env              string
@@ -31,6 +38,9 @@ func Load() (*Config, error) {
 		DatabaseURL:      os.Getenv("DATABASE_URL"),
 		GoogleClientIDs:  splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
 		BlobToken:        os.Getenv("BLOB_READ_WRITE_TOKEN"),
+		AutosendAPIKey:   os.Getenv("AUTOSEND_API_KEY"),
+		EmailFromAddress: envOr("EMAIL_FROM_ADDRESS", "hello@ownspce.com"),
+		EmailFromName:    envOr("EMAIL_FROM_NAME", "OwnSpce"),
 		PublicSiteOrigin: envOr("PUBLIC_SITE_ORIGIN", "https://ownspce.com"),
 		Env:              envOr("ENV", "development"),
 	}
@@ -39,6 +49,14 @@ func Load() (*Config, error) {
 
 	if c.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+
+	if raw := os.Getenv("ESCROW_MASTER_KEY"); raw != "" {
+		key, err := decodeKey("ESCROW_MASTER_KEY", 32)
+		if err != nil {
+			return nil, err
+		}
+		c.EscrowMasterKey = key
 	}
 
 	priv, err := decodeKey("JWT_PRIVATE_KEY", ed25519.SeedSize)

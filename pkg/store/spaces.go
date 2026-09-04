@@ -23,15 +23,14 @@ func RoleAtLeast(have, want string) bool { return roleRank[have] >= roleRank[wan
 // SpaceSummary is everything a client needs to start syncing a space. The space
 // NAME is absent by design — it lives encrypted inside the workspace document.
 type SpaceSummary struct {
-	ID                 uuid.UUID
-	Role               string
-	KeyEpoch           int
-	HeadSeq            int64
-	OldestSeq          int64
-	WorkspaceVersion   int64
-	MemberCount        int
-	WrappedKey         []byte
-	RecoveryWrappedKey []byte
+	ID               uuid.UUID
+	Role             string
+	KeyEpoch         int
+	HeadSeq          int64
+	OldestSeq        int64
+	WorkspaceVersion int64
+	MemberCount      int
+	WrappedKey       []byte
 }
 
 // SpaceMeta is the hot-path sync state of a space.
@@ -112,12 +111,16 @@ func insertWrappedKeys(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID, epoch 
 
 // ListSpaces returns every space the user belongs to, each carrying the space key
 // wrapped for the calling device so that device can begin decrypting immediately.
-// Args: ctx, userID, deviceID (calling device), includeRecovery (recovery flow)
+//
+// The account's escrow copy of the key is deliberately not selected. It is
+// sealed to a key only the server can open, so no caller could use it, and
+// handing out ciphertext nobody can read is surface without a purpose.
+// Args: ctx, userID, deviceID (calling device)
 // Returns: summaries ordered by creation, error
 // Handles: spaces whose key is not yet wrapped for this device (WrappedKey nil —
-// the device is pending approval)
-func (s *Store) ListSpaces(ctx context.Context, userID, deviceID uuid.UUID, includeRecovery bool) ([]SpaceSummary, error) {
-	rows, err := s.pool.Query(ctx, "SELECT s.id, m.role, s.key_epoch, s.head_seq, s.oldest_seq, COALESCE(w.version, 0), (SELECT count(*) FROM space_members mm WHERE mm.space_id = s.id), dk.wrapped_key, rk.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL LEFT JOIN workspace_docs w ON w.space_id = s.id LEFT JOIN space_keys dk ON dk.space_id = s.id AND dk.key_epoch = s.key_epoch AND dk.user_id = m.user_id AND dk.device_id = $2 LEFT JOIN space_keys rk ON rk.space_id = s.id AND rk.key_epoch = s.key_epoch AND rk.user_id = m.user_id AND rk.device_id IS NULL WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID, deviceID)
+// the device has not been let in)
+func (s *Store) ListSpaces(ctx context.Context, userID, deviceID uuid.UUID) ([]SpaceSummary, error) {
+	rows, err := s.pool.Query(ctx, "SELECT s.id, m.role, s.key_epoch, s.head_seq, s.oldest_seq, COALESCE(w.version, 0), (SELECT count(*) FROM space_members mm WHERE mm.space_id = s.id), dk.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL LEFT JOIN workspace_docs w ON w.space_id = s.id LEFT JOIN space_keys dk ON dk.space_id = s.id AND dk.key_epoch = s.key_epoch AND dk.user_id = m.user_id AND dk.device_id = $2 WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -126,11 +129,8 @@ func (s *Store) ListSpaces(ctx context.Context, userID, deviceID uuid.UUID, incl
 	var out []SpaceSummary
 	for rows.Next() {
 		var sp SpaceSummary
-		if err := rows.Scan(&sp.ID, &sp.Role, &sp.KeyEpoch, &sp.HeadSeq, &sp.OldestSeq, &sp.WorkspaceVersion, &sp.MemberCount, &sp.WrappedKey, &sp.RecoveryWrappedKey); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.Role, &sp.KeyEpoch, &sp.HeadSeq, &sp.OldestSeq, &sp.WorkspaceVersion, &sp.MemberCount, &sp.WrappedKey); err != nil {
 			return nil, err
-		}
-		if !includeRecovery {
-			sp.RecoveryWrappedKey = nil
 		}
 		out = append(out, sp)
 	}
@@ -322,6 +322,40 @@ func (s *Store) PendingKeySpaces(ctx context.Context, userID, deviceID uuid.UUID
 			return nil, err
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// EscrowWrap is one space's key sealed to a member's account escrow key — the
+// copy the server holds so a person who has lost every device can get back in.
+type EscrowWrap struct {
+	SpaceID    uuid.UUID
+	KeyEpoch   int
+	WrappedKey []byte
+}
+
+// ListEscrowWraps returns every space key wrapped to the user's escrow key at
+// the current epoch.
+//
+// These never leave the server. They are read only to be re-wrapped for a device
+// that has just proved the account's email address, which is the one moment the
+// escrow key is used at all.
+// Args: ctx, userID
+// Returns: one wrap per space that has one, oldest space first
+func (s *Store) ListEscrowWraps(ctx context.Context, userID uuid.UUID) ([]EscrowWrap, error) {
+	rows, err := s.pool.Query(ctx, "SELECT s.id, s.key_epoch, k.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL JOIN space_keys k ON k.space_id = s.id AND k.key_epoch = s.key_epoch AND k.user_id = m.user_id AND k.device_id IS NULL WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []EscrowWrap
+	for rows.Next() {
+		var w EscrowWrap
+		if err := rows.Scan(&w.SpaceID, &w.KeyEpoch, &w.WrappedKey); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
 	}
 	return out, rows.Err()
 }
