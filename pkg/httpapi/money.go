@@ -784,12 +784,19 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":              invite.ID,
-		"email":           invite.Email,
-		"role":            invite.Role,
-		"token":           token,
-		"expiresAt":       invite.ExpiresAt,
-		"userId":          inviteeID,
+		"id":        invite.ID,
+		"email":     invite.Email,
+		"role":      invite.Role,
+		"invitedBy": invite.InvitedBy,
+		"token":     token,
+		"expiresAt": invite.ExpiresAt,
+		"createdAt": invite.CreatedAt,
+		"userId":    inviteeID,
+		// Always false here, and present rather than omitted: this is the same
+		// shape GET /invites returns, and a client reading keyFiled off one of
+		// them must not get a boolean from one and undefined from the other.
+		// The key lands on the next call, not this one.
+		"keyFiled":        false,
 		"escrowPublicKey": encodeB64OrNil(escrowPublic),
 		"keyEpoch":        meta.KeyEpoch,
 	})

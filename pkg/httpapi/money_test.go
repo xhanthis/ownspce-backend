@@ -464,6 +464,17 @@ func TestInviteCarriesTheHouseholdKey(t *testing.T) {
 	requireStatus(t, rec, http.StatusCreated)
 	invite := decodeBody(t, rec)
 
+	// The create and list shapes have to agree: a client reading keyFiled off
+	// one of them must not get a boolean from one and undefined from the other.
+	for _, field := range []string{"id", "email", "role", "invitedBy", "token", "expiresAt", "createdAt", "userId", "keyFiled", "escrowPublicKey", "keyEpoch"} {
+		if _, present := invite[field]; !present {
+			t.Errorf("the created invite is missing %q", field)
+		}
+	}
+	if invite["keyFiled"] != false {
+		t.Errorf("keyFiled = %v on a freshly minted invite, want false", invite["keyFiled"])
+	}
+
 	guestID, ok := invite["userId"].(string)
 	if !ok || guestID == "" {
 		t.Fatal("the invite provisioned no account to seal the household key to")
