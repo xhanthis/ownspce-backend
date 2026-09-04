@@ -141,6 +141,10 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The browser now carries proof of this sign-in for every other OwnSpce
+	// surface on the domain, so crossing to one is not a second login.
+	s.refreshContinuation(w, user.ID, device.ID)
+
 	resp := sessionResponse{AccessToken: access, RefreshToken: refresh.Plaintext, ExpiresIn: int(auth.AccessTokenTTL.Seconds()), IsNewUser: isNew, User: toUserPayload(user)}
 	resp.Device.ID = device.ID.String()
 	resp.Device.Status = device.Status
@@ -351,6 +355,10 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if device.Status == store.DeviceStatusActive {
+		s.refreshContinuation(w, rotated.UserID, rotated.DeviceID)
+	}
+
 	resp := sessionResponse{AccessToken: access, RefreshToken: rotated.Token.Plaintext, ExpiresIn: int(auth.AccessTokenTTL.Seconds()), User: toUserPayload(user)}
 	resp.Device.ID = device.ID.String()
 	resp.Device.Status = device.Status
@@ -364,5 +372,8 @@ func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	// Signing out of one surface must not leave a cookie that silently signs the
+	// person back in on the next one.
+	s.clearContinuation(w)
 	w.WriteHeader(http.StatusNoContent)
 }
