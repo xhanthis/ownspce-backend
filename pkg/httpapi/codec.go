@@ -30,3 +30,16 @@ func encodeB64(b []byte) string {
 	}
 	return base64.StdEncoding.EncodeToString(b)
 }
+
+// encodeB64OrNil emits null rather than an empty string for absent binary.
+//
+// The difference matters where the client has to branch on it: an invite that
+// carries no escrow public key means "this deployment cannot seal the household
+// key for you, fall back", and a client checking truthiness of "" would get
+// that right by accident while one checking `=== null` would not.
+func encodeB64OrNil(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}

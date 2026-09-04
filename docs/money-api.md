@@ -172,11 +172,41 @@ Tombstones the record. Idempotent.
 
 ## Collaboration
 
-An invite makes somebody a member. **It does not give them the ledger.** Membership is permission to be handed the key; a member who already holds it has to wrap it for the new member's devices. This is the part most likely to be got wrong, and the part the API is shaped around.
+**Inviting is two calls, and the second one is the one that matters.** The server never holds a household key, so it cannot seal one for a new member; the owner has to, while they still have the plaintext. So: create the invite, wrap the key to the escrow identity it comes back with, file it. From then on the invitee is simply a member, and signing in on any device collects the key the way any returning device does.
+
+An invite used to be permission to be handed the ledger and not the ledger, with the invitee left on a waiting screen until an owner next opened Money. That is gone.
 
 ### GET / POST / DELETE /money/households/{spaceID}/invites
 
-Owner only. `POST` takes `{ "email", "role": "editor" | "viewer" }` and returns the plaintext token **once and never again** — only its SHA-256 is stored, so a dump of `money_invites` yields no working links. An address that already has an open invite is `409 invite_exists`. Invites expire after 14 days.
+Owner only. `POST` takes `{ "email", "role": "editor" | "viewer" }`.
+
+```json
+// 201
+{ "id": "…", "email": "amma@home.in", "role": "editor",
+  "token": "oski_…", "expiresAt": "…",
+  "userId": "…", "escrowPublicKey": "<base64 32B X25519>", "keyEpoch": 3 }
+```
+
+The plaintext token is returned **once and never again** — only its SHA-256 is stored, so a dump of `money_invites` yields no working links.
+
+`userId` and `escrowPublicKey` are the account provisioned for that address, created if nobody has ever signed in with it. Seal the household key to that public key and post it to the route below. `escrowPublicKey` is `null` when the deployment has no escrow master key; there is then nothing to seal to, and the client falls back to `key-gaps` once the invitee's devices appear.
+
+An address that already has an open invite is `409 invite_exists`. Invites expire after 14 days.
+
+`GET` lists what is still outstanding, each with `keyFiled` — an invite whose second call never landed is one the owner should send again.
+
+### POST /money/households/{spaceID}/invites/{inviteID}/key
+
+Owner only. Files the household key on the invitation, which is what makes the invitee a member.
+
+```json
+{ "keyEpoch": 3, "wrappedKey": "<base64 sealed box>" }
+   →  200 { "userId": "…", "spaceId": "…" }
+```
+
+Membership, the sealed key and the invite's closing stamp land in one transaction: a member with no key is the screen this replaced.
+
+An invite already filed, revoked or expired is `404` — so a replayed call cannot re-add somebody the owner has since removed. A wrap computed against an epoch that has since rotated is `409 stale_epoch`. An invite created while escrow was unavailable is `403 no_escrow_identity`; invite the address again.
 
 ### POST /money/invites/accept
 
@@ -184,15 +214,19 @@ Owner only. `POST` takes `{ "email", "role": "editor" | "viewer" }` and returns 
 { "token": "oski_…" }
 ```
 
-→ `200 { "spaceId": "…", "awaitingKey": true }`
+→ `200 { "spaceId": "…" }`
 
-Mounted outside the household router because the caller is by definition not yet a member. The token is the capability; the invite's email is not checked against the caller's, because requiring both would lock out anyone whose Google address differs from the one a family member typed. Expiry and single use are what bound it.
+Its job shrank. An invite created since the key started travelling with it has already made its invitee a member, so following the link is navigation and this call answers with the household to open. It stays for links sent before that change, and because a token redeemed by somebody whose address differs from the one the invite names is still the only way they get in.
 
-Anything unknown, expired, revoked or already redeemed is `404`, so none of them can be told apart by probing.
+Mounted outside the household router because the caller may not be a member yet. The token is the capability; the invite's email is not checked against the caller's, because requiring both would lock out anyone whose Google address differs from the one a family member typed.
+
+Anything unknown, expired or revoked is `404`, so none of them can be told apart by probing. A token the **caller themselves** already redeemed resolves to the same household again, so re-opening the link they were sent lands on the ledger rather than on "no longer valid".
 
 ### GET /money/households/{spaceID}/key-gaps
 
-Owner only. Everyone in the household holding no wrapped key at the current epoch: each member's active devices, and their account recovery key.
+Owner only. Everyone in the household holding no wrapped key at the current epoch: each member's active devices, and their account escrow key.
+
+This is the repair path now rather than the invite path — a member whose escrow copy was dropped by a key rotation, or one who joined before invites carried the key.
 
 ```json
 { "gaps": [ { "userId": "…", "deviceId": "…", "publicKey": "…",
@@ -226,10 +260,9 @@ Use the space routes: `GET /spaces/{spaceID}/members`, `DELETE /spaces/{spaceID}
 
 `GET /devices`, `POST /devices/{deviceID}/approve` and `GET /devices/{deviceID}/pending-keys` are the same routes the notes client uses, and they cover money households too — a household is a space.
 
-A person's **first** device is active automatically; every later one lands `pending` and holds no key. Two ways out:
+**Every device is in from the moment it signs in**, and the sign-in hands it the account's escrow copy of every household key. There is no approval screen and nothing to poll. A device that lands on a household with no escrow copy — one created before escrow existed — still needs a wrap from a device that holds the key, through `pending-keys` and `approve`.
 
-- **Approval.** An active device reads `pending-keys`, wraps each space key to the new device's public key after the person compares fingerprints, and calls `approve`.
-- **Recovery phrase.** `GET /recovery/spaces` returns the space keys wrapped to the account recovery key. It is the one read a **pending** device may make, because restoring from a phrase is precisely the situation where no device is trusted — and what it returns is useless without the phrase. The device unwraps locally, re-wraps to itself, and calls `approve` on itself with `recovery: true`.
+A browser opening Money with no session of its own should call `POST /auth/continue` with `credentials: "include"` before showing a sign-in screen: somebody already signed in on `app.ownspce.com` is signed in here too.
 
 ## Errors
 
@@ -238,7 +271,8 @@ Codes specific to this surface:
 | Status | Code | Meaning |
 |---|---|---|
 | 400 | `bad_request` | A malformed field; the message names it. |
-| 403 | `device_pending` | Signed in, but this device is not approved. Not an auth failure — do not sign the user out. |
+| 403 | `no_escrow_identity` | This invite has no account to seal the household key to. Invite the address again. |
+| 409 | `stale_epoch` | The household key rotated while you were wrapping. Refetch and retry. |
 | 403 | `insufficient_role` | The action needs a higher role in this household. |
 | 404 | `not_found` | No household here, or the caller is not a member. The two are deliberately indistinguishable. |
 | 409 | `space_exists` | That household id is taken; mint a new one. |

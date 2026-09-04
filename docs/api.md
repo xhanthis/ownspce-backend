@@ -65,9 +65,11 @@ Public. Verifies a Google or Apple ID token — or a code this API mailed — cr
   "device": { "id": "…", "status": "active" } }
 ```
 
-`platform` ∈ `ios | macos | android | windows | linux | web | ""`. The **first** live device of an account is `active`; every later one is `pending` until approved (see device approval). A pending device gets a session so it can poll for approval, but every data route answers `403 device_pending`.
+`platform` ∈ `ios | macos | android | windows | linux | web | ""`. Every device is `active` from this call. Signing in **is** the gate — proving the account with Google, Apple or a mailed code is the whole check — and there is no approval step behind it.
 
-A first device that holds no keys is handed the account's escrow copies during this call. That is the lost-every-device path: revoke or lose them all, sign in again, and the replacement device is both trusted and able to read.
+A device that holds no keys is handed the account's escrow copies during this call. That is also the lost-every-device path: revoke or lose them all, sign in again, and the replacement device is both trusted and able to read.
+
+A browser is additionally handed the cross-surface session cookie (see below). An installed app is not: it sends no `Origin` and keeps no cookie jar.
 
 A wrong or expired code answers `401`; a code burnt by five wrong guesses answers `403 code_exhausted`.
 
@@ -78,8 +80,31 @@ Public. Rotates the refresh token. Replaying a spent token revokes the entire fa
 { "refreshToken": "zxGx..." }   →  same shape as POST /auth/session
 ```
 
+### POST /auth/continue
+Public. Turns "this browser is signed in to OwnSpce somewhere" into a session on the surface asking, using the cross-surface cookie.
+
+```json
+{ "device": { "label": "Chrome", "platform": "web", "publicKey": "<base64 32B X25519>" } }
+   →  same shape as POST /auth/session
+```
+
+`app.ownspce.com` and `money.ownspce.com` are separate origins with separate storage, so each mints its own device keypair and neither can see the other's session. This endpoint spends the shared cookie: it proves the account, registers the calling surface's device as a device of its own, hands it the account escrow copies, and rotates the cookie on the way out.
+
+Call it with `credentials: "include"`, once, before painting a sign-in screen. A browser that has never signed in anywhere pays one `401` — and its cookie, if it had a dead one, is cleared so the next cold start does not pay again.
+
+### The cross-surface session cookie
+`os_session`, set on `/auth/session`, `/auth/refresh` and `/auth/continue`, cleared on `/auth/logout`:
+
+```
+Set-Cookie: os_session=…; Domain=ownspce.com; Path=/; Max-Age=…; HttpOnly; Secure; SameSite=Lax
+```
+
+It carries a refresh token in its own family, so it inherits sliding expiry, replay detection and family revocation from the ordinary token machinery. `HttpOnly` keeps it out of reach of script on every surface at once; `SameSite=Lax` is sufficient because api, app and money share a registrable domain and the request is therefore same-site.
+
+Set `SESSION_COOKIE_DOMAIN` to enable it. Unset — the right answer locally, and for any deployment whose surfaces do not share a domain — no cookie is issued and each surface asks for its own sign-in.
+
 ### POST /auth/logout
-Revokes the calling device's refresh tokens. → `204`.
+Revokes the calling device's refresh tokens, and clears **and revokes** the cross-surface cookie. Signing out of Money and staying silently signed in on app is worse than signing out of both. → `204`.
 
 ### GET /me
 → the `user` object above.
@@ -107,16 +132,18 @@ Public. → `{"id","username","name","avatarUrl"}`. Never email, plan, or settin
 ## Devices & keys
 
 ### GET /devices
-→ `{"devices":[{"id","label","platform","publicKey","status","createdAt","lastSeenAt","isCurrent"}]}` — includes `pending` devices so a trusted device can offer approval.
+→ `{"devices":[{"id","label","platform","publicKey","status","createdAt","lastSeenAt","isCurrent"}]}`. `status` is `active` for anything a person can still sign in on; `pending` survives in the schema only for rows written before device approval was removed, and clears on that device's next sign-in.
 
 ### POST /devices
-Adds a device to an already-authenticated account (CLI, etc.). `{"label","platform","publicKey"}` → `201` device object. Device keys are immutable: a new key is a new device.
+Adds a device to an already-authenticated account (CLI, etc.). `{"label","platform","publicKey"}` → `201` device object. Device keys are immutable: a new key is a new device. It is active and holding its escrow copies from creation, on the same terms as one registered at sign-in.
 
 ### GET /devices/{deviceId}/pending-keys
-Tells an approving device exactly what to wrap. → `{"deviceId","publicKey","spaces":[{"spaceId","keyEpoch"}]}`.
+Tells a device holding a space key exactly what another device still needs wrapped. → `{"deviceId","publicKey","spaces":[{"spaceId","keyEpoch"}]}`.
 
 ### POST /devices/{deviceId}/approve
-Activates a pending device and files the space keys wrapped to its public key.
+Files space keys wrapped to a device's public key.
+
+This is no longer a gate — a device is in the account from sign-in — but it is still how a device gets a key for a space with **no escrow copy**, which is every space created before escrow existed. Nothing else can produce that key: the server does not hold it.
 
 ```json
 { "emailCode": "",
@@ -124,8 +151,8 @@ Activates a pending device and files the space keys wrapped to its public key.
 ```
 
 Two callers are allowed:
-- an **active** device of the same account (after the user compares key fingerprints), supplying the wraps itself;
-- the **pending device itself** with `emailCode` and no wraps, having proved the account's email address; the server re-wraps the account escrow copies for it.
+- **another** device of the same account (after the user compares key fingerprints), supplying the wraps itself;
+- the **device itself** with `emailCode` and no wraps, having proved the account's email address; the server re-wraps the account escrow copies for it. A device may never file wraps for itself without that code — otherwise it could claim keys nobody granted it, and `403 approval_required` says so.
 
 Keys naming a space the user has left, or an epoch that has since rotated, are silently skipped — refetch and retry. → `200` device object.
 
@@ -133,7 +160,7 @@ Keys naming a space the user has left, or an epoch that has since rotated, are s
 Revokes: refresh tokens die, space keys wrapped to that device are deleted, and its next request is rejected. Rotate the affected space keys afterwards — revocation cannot make a device forget a key it already holds. → `204`.
 
 ### POST /devices/{deviceID}/verify-email/code
-Mails a six-digit code to the account's **own** address so the calling device can let itself in. Reachable by a pending device — that is the only device that needs it — and only for itself: a `deviceID` other than the caller's answers `400`.
+Mails a six-digit code to the account's **own** address so the calling device can collect the account escrow copies. Only for itself: a `deviceID` other than the caller's answers `400`.
 
 ```
 →  204

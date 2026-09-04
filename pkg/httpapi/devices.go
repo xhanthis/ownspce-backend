@@ -58,7 +58,9 @@ type registerDeviceRequest struct {
 }
 
 // handleRegisterDevice adds a device to an already-authenticated account (for
-// example a CLI). Device keys are immutable: a new key is always a new device.
+// example a CLI). Device keys are immutable: a new key is always a new device,
+// and it is trusted from creation because the caller has already proved the
+// account.
 func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 	var req registerDeviceRequest
 	if err := decodeJSON(w, r, maxSmallBody, &req); err != nil {
@@ -76,12 +78,16 @@ func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	device, err := s.store.RegisterDevice(r.Context(), callerFrom(r.Context()).UserID, req.Label, req.Platform, publicKey)
+	c := callerFrom(r.Context())
+	device, err := s.store.RegisterDevice(r.Context(), c.UserID, req.Label, req.Platform, publicKey)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toDevicePayload(*device, callerFrom(r.Context()).DeviceID))
+	// Registered by an already-authenticated caller, so it is admitted on the
+	// same terms as one registered at sign-in.
+	device = s.admitDevice(r.Context(), c.UserID, device)
+	writeJSON(w, http.StatusCreated, toDevicePayload(*device, c.DeviceID))
 }
 
 // approveWrappedKey is one space key re-wrapped for the device being approved.
@@ -193,7 +199,7 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 		approver = &c.DeviceID
 	}
 
-	device, err := s.store.ApproveDevice(r.Context(), c.UserID, targetID, approver, via, append(keys, escrowKeys...))
+	device, err := s.store.ApproveDevice(r.Context(), c.UserID, targetID, approver, &via, append(keys, escrowKeys...))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, errNotFound("device not found for this account"))

@@ -25,7 +25,18 @@ type Config struct {
 	EmailFromName    string
 	PublicSiteOrigin string
 	AllowedOrigins   []string
-	Env              string
+	// SessionCookieDomain is the parent domain the cross-surface session cookie
+	// is scoped to, e.g. "ownspce.com" — which covers app., money. and every
+	// other subdomain. Empty disables the cookie entirely, which is the right
+	// answer for local development and for any deployment whose surfaces do not
+	// share a registrable domain: without one, every surface simply asks for its
+	// own sign-in.
+	//
+	// A leading dot is accepted and stripped. RFC 6265 says a browser ignores it
+	// and stores the cookie against the bare domain either way, so keeping it
+	// would only mean this field never equalled what a parsed cookie reports.
+	SessionCookieDomain string
+	Env                 string
 }
 
 // Load reads configuration from the environment and validates what the API
@@ -35,14 +46,15 @@ type Config struct {
 // provider audience lists (allowed — that provider is then simply refused).
 func Load() (*Config, error) {
 	c := &Config{
-		DatabaseURL:      os.Getenv("DATABASE_URL"),
-		GoogleClientIDs:  splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
-		BlobToken:        os.Getenv("BLOB_READ_WRITE_TOKEN"),
-		AutosendAPIKey:   os.Getenv("AUTOSEND_API_KEY"),
-		EmailFromAddress: envOr("EMAIL_FROM_ADDRESS", "hello@ownspce.com"),
-		EmailFromName:    envOr("EMAIL_FROM_NAME", "OwnSpce"),
-		PublicSiteOrigin: envOr("PUBLIC_SITE_ORIGIN", "https://ownspce.com"),
-		Env:              envOr("ENV", "development"),
+		DatabaseURL:         os.Getenv("DATABASE_URL"),
+		GoogleClientIDs:     splitList(os.Getenv("GOOGLE_CLIENT_IDS")),
+		BlobToken:           os.Getenv("BLOB_READ_WRITE_TOKEN"),
+		AutosendAPIKey:      os.Getenv("AUTOSEND_API_KEY"),
+		EmailFromAddress:    envOr("EMAIL_FROM_ADDRESS", "hello@ownspce.com"),
+		EmailFromName:       envOr("EMAIL_FROM_NAME", "OwnSpce"),
+		PublicSiteOrigin:    envOr("PUBLIC_SITE_ORIGIN", "https://ownspce.com"),
+		SessionCookieDomain: strings.TrimPrefix(strings.TrimSpace(os.Getenv("SESSION_COOKIE_DOMAIN")), "."),
+		Env:                 envOr("ENV", "development"),
 	}
 	c.AppleAudiences = splitList(strings.Join([]string{os.Getenv("APPLE_BUNDLE_ID"), os.Getenv("APPLE_SERVICES_ID")}, ","))
 	c.AllowedOrigins = mergeOrigins(c.PublicSiteOrigin, splitList(os.Getenv("ALLOWED_ORIGINS")))

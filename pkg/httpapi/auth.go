@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ownspce/backend/pkg/auth"
@@ -128,7 +129,7 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.restoreFromEscrow(r.Context(), user.ID, device)
+	device = s.admitDevice(r.Context(), user.ID, device)
 
 	access, _, err := s.signer.Mint(user.ID, device.ID)
 	if err != nil {
@@ -144,49 +145,146 @@ func (s *Server) handleAuthSession(w http.ResponseWriter, r *http.Request) {
 	resp := sessionResponse{AccessToken: access, RefreshToken: refresh.Plaintext, ExpiresIn: int(auth.AccessTokenTTL.Seconds()), IsNewUser: isNew, User: toUserPayload(user)}
 	resp.Device.ID = device.ID.String()
 	resp.Device.Status = device.Status
+	s.carrySession(w, r, user.ID, device.ID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// restoreFromEscrow gives an active device that holds no keys the account's
-// escrow copies.
+type continueRequest struct {
+	Device deviceRegistration `json:"device"`
+}
+
+// handleAuthContinue turns "this browser is signed in to OwnSpce somewhere" into
+// a session on the surface asking.
 //
-// It exists for the case the whole feature is for. Somebody loses every device;
-// the next one they sign in on is the account's only live device, so it is
-// trusted automatically — and would otherwise land in an account full of
-// households it cannot open, which reads as "my money is gone". Signing in has
-// already proved the account, by Google or by a mailed code, so re-wrapping here
-// is the same claim the email-verification path makes.
+// OwnSpce is one product on several addresses, and app.ownspce.com and
+// money.ownspce.com are separate origins with separate storage — so each mints
+// its own device keypair and neither can see the other's session. What they do
+// share is the cookie on the parent domain, and this is the endpoint that spends
+// it: it proves the account, registers the calling surface's device as a device
+// of its own, admits it, and hands back exactly what every other door hands
+// back.
 //
-// A device that already holds keys is left alone, so this costs one count query
-// on an ordinary sign-in and never touches the escrow key.
-// Args: ctx, userID, the device just registered
-// Handles: escrow not configured, no escrow wraps, and any failure along the
-// way — all of which leave the device exactly as it was rather than failing the
-// sign-in, because being signed in and keyless still beats not being signed in
-func (s *Server) restoreFromEscrow(ctx context.Context, userID uuid.UUID, device *store.Device) {
-	if device.Status != store.DeviceStatusActive || !s.escrow.Configured() {
+// A surface tries this once before painting a sign-in screen. It costs one 401
+// for a browser that has never signed in anywhere, which is the whole reason it
+// is cheap enough to try on every cold start.
+func (s *Server) handleAuthContinue(w http.ResponseWriter, r *http.Request) {
+	var req continueRequest
+	if err := decodeJSON(w, r, maxSmallBody, &req); err != nil {
+		writeError(w, err)
 		return
 	}
 
+	publicKey, err := decodeB64(req.Device.PublicKey, "device.publicKey")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := seal.ValidatePublicKey(publicKey); err != nil {
+		writeError(w, badRequest("%v", err))
+		return
+	}
+
+	cookie, err := r.Cookie(sessionCookieName)
+	if err != nil || cookie.Value == "" {
+		writeError(w, errUnauthorized("no OwnSpce session on this browser"))
+		return
+	}
+
+	// Rotating is the validation. It checks the token is live, unspent and
+	// belongs to a device nobody has revoked, and produces the successor this
+	// response will put back in the cookie — so a stolen cookie is spent once
+	// and then detectable, exactly like a stolen refresh token.
+	rotated, err := s.store.RotateRefreshToken(r.Context(), cookie.Value)
+	if err != nil {
+		// Whatever went wrong, this browser is not getting in on this cookie
+		// again. Clearing it stops every future cold start from paying for the
+		// same failed hop.
+		s.writeSessionCookie(w, "", time.Time{})
+		writeError(w, errUnauthorized("this browser's OwnSpce session has expired"))
+		return
+	}
+
+	user, err := s.store.GetUser(r.Context(), rotated.UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if escrowPublic := s.ensureEscrowKey(r.Context(), user.ID); len(escrowPublic) > 0 {
+		user.EscrowPublicKey = escrowPublic
+	}
+
+	device, err := s.store.RegisterDevice(r.Context(), user.ID, req.Device.Label, req.Device.Platform, publicKey)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	device = s.admitDevice(r.Context(), user.ID, device)
+
+	access, _, err := s.signer.Mint(user.ID, device.ID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	refresh, err := s.store.IssueRefreshToken(r.Context(), user.ID, device.ID, device.Platform, nil)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	resp := sessionResponse{AccessToken: access, RefreshToken: refresh.Plaintext, ExpiresIn: int(auth.AccessTokenTTL.Seconds()), User: toUserPayload(user)}
+	resp.Device.ID = device.ID.String()
+	resp.Device.Status = device.Status
+	s.writeSessionCookie(w, rotated.Token.Plaintext, rotated.Token.ExpiresAt)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// admitDevice trusts a device and gives it the account's space keys.
+//
+// Signing in is the whole gate now. A device that has just proved the account —
+// with Google, with a mailed code, or with an existing session on another
+// OwnSpce surface — is active from that moment, and the escrow copy of every
+// space key it should be able to read is re-wrapped for it here.
+//
+// It also finishes the job for devices left pending by the old approval flow.
+// Those rows still exist, and their owners are sitting on a screen polling a
+// status that nothing will ever change; the next sign-in on that device clears
+// it.
+//
+// A device that already holds keys is left alone, so an ordinary sign-in costs
+// one count query and never touches the escrow key.
+// Args: ctx, userID, the device just registered
+// Returns: the device as it now stands, which is the caller's to send back
+// Handles: escrow not configured and no escrow wraps — both leave the device
+// active but keyless rather than failing the sign-in, because being signed in
+// with nothing to read still beats not being signed in; and any failure along
+// the way, which is logged and swallowed for the same reason
+func (s *Server) admitDevice(ctx context.Context, userID uuid.UUID, device *store.Device) *store.Device {
 	held, err := s.store.CountDeviceKeys(ctx, device.ID)
 	if err != nil {
 		log.Printf("count device keys for %s: %v", device.ID, err)
-		return
-	}
-	if held > 0 {
-		return
+		return device
 	}
 
-	keys, err := s.rewrapFromEscrow(ctx, userID, device.PublicKey)
-	if err != nil || len(keys) == 0 {
+	var keys []store.WrappedSpaceKey
+	if held == 0 && s.escrow.Configured() {
+		keys, err = s.rewrapFromEscrow(ctx, userID, device.PublicKey)
 		if err != nil {
 			log.Printf("escrow restore for %s: %v", device.ID, err)
+			keys = nil
 		}
-		return
 	}
-	if _, err := s.store.ApproveDevice(ctx, userID, device.ID, nil, store.ApprovedViaFirst, keys); err != nil {
-		log.Printf("file escrow keys for %s: %v", device.ID, err)
+
+	// Nothing to do for an active device that already has what it needs.
+	if device.Status == store.DeviceStatusActive && len(keys) == 0 {
+		return device
 	}
+
+	admitted, err := s.store.ApproveDevice(ctx, userID, device.ID, nil, nil, keys)
+	if err != nil {
+		log.Printf("admit device %s: %v", device.ID, err)
+		return device
+	}
+	return admitted
 }
 
 // userFromIDToken resolves a Google or Apple credential to an account.
@@ -354,15 +452,24 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	resp := sessionResponse{AccessToken: access, RefreshToken: rotated.Token.Plaintext, ExpiresIn: int(auth.AccessTokenTTL.Seconds()), User: toUserPayload(user)}
 	resp.Device.ID = device.ID.String()
 	resp.Device.Status = device.Status
+	// A session kept alive here is a session kept alive everywhere. Without
+	// this the cookie would age out on its own clock while the surface that set
+	// it stayed signed in, and the sibling surfaces would start asking for a
+	// login the person had never actually lost.
+	s.carrySession(w, r, rotated.UserID, rotated.DeviceID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleAuthLogout revokes the calling device's refresh tokens. The access token
-// lives out its remaining minutes; the client also discards its local keys.
+// handleAuthLogout revokes the calling device's refresh tokens and the
+// cross-surface cookie. The access token lives out its remaining minutes; the
+// client also discards its local keys.
 func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.RevokeDeviceTokens(r.Context(), callerFrom(r.Context()).DeviceID); err != nil {
 		writeError(w, err)
 		return
 	}
+	// Deliberately cross-surface: signing out of Money and staying silently
+	// signed in on app is worse than signing out of both.
+	s.dropSession(w, r)
 	w.WriteHeader(http.StatusNoContent)
 }
