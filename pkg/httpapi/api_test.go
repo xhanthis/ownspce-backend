@@ -244,51 +244,57 @@ func TestProfileUpdateAndUsernameRules(t *testing.T) {
 	}
 }
 
-func TestSecondDeviceIsPendingUntilApproved(t *testing.T) {
-	// Arrange: first device is trusted, second lands pending
+// TestASecondDeviceNeedsNoApproval pins the gate that was removed.
+//
+// A device on an account that already had one used to land pending and stay
+// locked out of every data path until an existing device approved it — which
+// left the person who had lost that existing device with nothing to approve
+// with, on a screen polling a status nothing would ever change. Signing in is
+// the whole check now.
+//
+// What did not change is that being let in is not being handed a key. The
+// manual wrap survives for a space with no escrow copy, and the second half of
+// this test is that route still working.
+func TestASecondDeviceNeedsNoApproval(t *testing.T) {
+	// Arrange
 	h := newHarness(t)
 	first := h.signUp("laptop")
 	spaceID := h.createSpace(first)
 	second := h.addDevice(first.UserID, "phone")
 
-	if first.Status != store.DeviceStatusActive {
-		t.Fatalf("first device status = %q, want active", first.Status)
-	}
-	if second.Status != store.DeviceStatusPending {
-		t.Fatalf("second device status = %q, want pending", second.Status)
+	if first.Status != store.DeviceStatusActive || second.Status != store.DeviceStatusActive {
+		t.Fatalf("device statuses = %q and %q, want both active", first.Status, second.Status)
 	}
 
-	// Act: a pending device may authenticate but must not reach any data path
-	blocked := h.do(http.MethodGet, "/v1/spaces", second, nil)
-	requireStatus(t, blocked, http.StatusForbidden)
-	if code := errorCode(t, blocked); code != "device_pending" {
-		t.Errorf("code = %q, want device_pending", code)
-	}
-
-	selfApprove := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", second, map[string]any{"wrappedKeys": []any{}})
-	requireStatus(t, selfApprove, http.StatusForbidden)
-	if code := errorCode(t, selfApprove); code != "approval_required" {
-		t.Errorf("code = %q, want approval_required", code)
-	}
-
-	pending := h.do(http.MethodGet, "/v1/devices/"+second.DeviceID.String()+"/pending-keys", first, nil)
-	requireStatus(t, pending, http.StatusOK)
-	if spaces := decodeBody(t, pending)["spaces"].([]any); len(spaces) != 1 {
-		t.Fatalf("expected exactly the one space to need a wrapped key, got %d", len(spaces))
-	}
-
-	approve := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", first, map[string]any{"wrappedKeys": []map[string]any{{"spaceId": spaceID, "keyEpoch": 1, "wrappedKey": wrappedKey(t)}}})
-	requireStatus(t, approve, http.StatusOK)
-
-	// Assert: the approved device now receives the space key wrapped for it
+	// Act: the data plane, with nobody having approved anything
 	listed := h.do(http.MethodGet, "/v1/spaces", second, nil)
+
+	// Assert
 	requireStatus(t, listed, http.StatusOK)
 	spaces := decodeBody(t, listed)["spaces"].([]any)
 	if len(spaces) != 1 {
 		t.Fatalf("expected one space, got %d", len(spaces))
 	}
-	if spaces[0].(map[string]any)["wrappedKey"] == nil {
-		t.Error("approved device should receive its wrapped space key")
+	// This space was created with a device wrap only, so there is no escrow copy
+	// to restore from and the new device honestly holds nothing. A key here
+	// would mean the server had invented one.
+	if spaces[0].(map[string]any)["wrappedKey"] != nil {
+		t.Error("a space with no escrow copy must not produce a key for a device nobody wrapped one for")
+	}
+
+	pending := h.do(http.MethodGet, "/v1/devices/"+second.DeviceID.String()+"/pending-keys", first, nil)
+	requireStatus(t, pending, http.StatusOK)
+	if spaces := decodeBody(t, pending)["spaces"].([]any); len(spaces) != 1 {
+		t.Fatalf("expected exactly the one space to still need a wrapped key, got %d", len(spaces))
+	}
+
+	approve := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", first, map[string]any{"wrappedKeys": []map[string]any{{"spaceId": spaceID, "keyEpoch": 1, "wrappedKey": wrappedKey(t)}}})
+	requireStatus(t, approve, http.StatusOK)
+
+	again := h.do(http.MethodGet, "/v1/spaces", second, nil)
+	requireStatus(t, again, http.StatusOK)
+	if decodeBody(t, again)["spaces"].([]any)[0].(map[string]any)["wrappedKey"] == nil {
+		t.Error("the key an existing device wrapped did not reach the new device")
 	}
 }
 
@@ -690,10 +696,11 @@ func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 
 // TestEscrowWrapsNeverLeaveTheServer pins the property that makes escrow
 // tolerable at all. The account's copy of a household key is readable by the
-// server — that is the deal — but it must never be servable to a caller, or a
-// pending device would be handed the very thing the email code is supposed to
-// gate. The endpoint that used to serve them, back when the copy was sealed to
-// a phrase only the person held, is gone.
+// server — that is the deal — but it must never be servable to a caller. The
+// endpoint that used to serve them, back when the copy was sealed to a phrase
+// only the person held, is gone, and the only thing that ever turns an escrow
+// copy into a usable key is the server re-wrapping it for a device that has
+// just proved the account.
 func TestEscrowWrapsNeverLeaveTheServer(t *testing.T) {
 	// Arrange
 	h := newHarness(t)
@@ -701,21 +708,34 @@ func TestEscrowWrapsNeverLeaveTheServer(t *testing.T) {
 	h.escrowPublicKey(t, owner.UserID)
 	spaceID := h.createSpaceWithEscrow(owner)
 
-	pending := h.addDevice(owner.UserID, "a laptop nobody has let in")
-	if pending.Status != "pending" {
-		t.Fatalf("second device status = %q, want pending", pending.Status)
+	// A second device, which since device approval was removed is in the account
+	// from the moment it registers. That makes this test sharper than it was:
+	// the escrow copy is no longer protected by a waiting room, only by nothing
+	// ever serving it.
+	second := h.addDevice(owner.UserID, "a laptop that just walked in")
+	if second.Status != store.DeviceStatusActive {
+		t.Fatalf("second device status = %q, want active", second.Status)
 	}
 
 	// Act — the removed route, and the query that used to smuggle the same bytes
 	// out through the ordinary spaces list.
-	removed := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
+	removed := h.do(http.MethodGet, "/v1/recovery/spaces", second, nil)
 	viaQuery := h.do(http.MethodGet, "/v1/spaces?includeRecoveryKeys=true", owner, nil)
-	spaces := h.do(http.MethodGet, "/v1/spaces", pending, nil)
+	spaces := h.do(http.MethodGet, "/v1/spaces", second, nil)
 
-	// Assert — no route serves the escrow copy, and the ordinary list is still
-	// behind device approval.
+	// Assert — no route serves the escrow copy, to anybody, ever.
 	requireStatus(t, removed, http.StatusNotFound)
-	requireStatus(t, spaces, http.StatusForbidden)
+
+	requireStatus(t, spaces, http.StatusOK)
+	for _, raw := range decodeBody(t, spaces)["spaces"].([]any) {
+		row := raw.(map[string]any)
+		if _, leaked := row["recoveryWrappedKey"]; leaked {
+			t.Fatal("GET /spaces serves the account escrow wrap to a device")
+		}
+		if row["wrappedKey"] != nil {
+			t.Fatal("a device nobody wrapped a key for was handed one anyway")
+		}
+	}
 
 	requireStatus(t, viaQuery, http.StatusOK)
 	for _, raw := range decodeBody(t, viaQuery)["spaces"].([]any) {
@@ -753,13 +773,13 @@ func (h *harness) createSpaceWithEscrow(a *actor) string {
 // which is exactly how device approval started answering 400 in production after
 // the recovery phrase was removed. Any future removal has to fail here first.
 func TestApproveStillAcceptsTheFieldsDeployedClientsSend(t *testing.T) {
-	// Arrange — an active device approving a pending one, as the notes app does.
+	// Arrange — one device filing keys for another, as the notes app does.
 	h := newHarness(t)
 	owner := h.signUp("an already trusted laptop")
-	pending := h.addDevice(owner.UserID, "a new browser")
+	target := h.addDevice(owner.UserID, "a new browser")
 
 	// Act — the exact body shape a deployed client sends, legacy field included.
-	rec := h.do(http.MethodPost, "/v1/devices/"+pending.DeviceID.String()+"/approve", owner, map[string]any{
+	rec := h.do(http.MethodPost, "/v1/devices/"+target.DeviceID.String()+"/approve", owner, map[string]any{
 		"recovery": false,
 		"wrappedKeys": []map[string]any{
 			{"spaceId": uuid.NewString(), "keyEpoch": 1, "wrappedKey": wrappedKey(t)},

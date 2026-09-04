@@ -82,6 +82,7 @@ func (s *Server) routes() http.Handler {
 		r.Group(func(r chi.Router) {
 			r.With(s.rateLimit(ratelimit.AuthSession, subjectIP)).Post("/auth/session", s.handleAuthSession)
 			r.With(s.rateLimit(ratelimit.AuthRefresh, subjectIP)).Post("/auth/refresh", s.handleAuthRefresh)
+			r.With(s.rateLimit(ratelimit.AuthRefresh, subjectIP)).Post("/auth/continue", s.handleAuthContinue)
 			r.With(s.rateLimit(ratelimit.EmailCodeSend, subjectIP)).Post("/auth/email/code", s.handleEmailCode)
 			r.With(s.rateLimit(ratelimit.PublicRead, subjectIP)).Get("/users/{username}", s.handleGetUserByUsername)
 			r.With(s.rateLimit(ratelimit.PublicRead, subjectIP)).Get("/shares/{shareID}", s.handlePublicShare)

@@ -192,3 +192,17 @@ func hashToken(plaintext string) []byte {
 	sum := sha256.Sum256([]byte(plaintext))
 	return sum[:]
 }
+
+// RevokeTokenFamily revokes every live token in the family the presented token
+// belongs to, without treating the presentation as a replay.
+//
+// Sign-out uses it on the cross-surface cookie. Rotation is the wrong tool
+// there: it would hand back a successor nobody wants and, on a second sign-out,
+// look exactly like the theft it is designed to punish.
+// Args: ctx, plaintext (the token as presented)
+// Returns: error; an unknown or already-revoked token is a no-op success,
+// because signing out twice is not a failure
+func (s *Store) RevokeTokenFamily(ctx context.Context, plaintext string) error {
+	_, err := s.pool.Exec(ctx, "UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = (SELECT family_id FROM refresh_tokens WHERE token_hash = $1) AND revoked_at IS NULL", hashToken(plaintext))
+	return err
+}

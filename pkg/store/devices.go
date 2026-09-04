@@ -54,12 +54,23 @@ func scanDevice(row pgx.Row) (*Device, error) {
 	return &d, nil
 }
 
-// RegisterDevice adds a device for a user. The first live device of an account is
-// trusted automatically; every later one lands pending until an existing device
-// approves it or the recovery phrase provisions it.
+// RegisterDevice adds a device for a user, trusted from the moment it is created.
+//
+// Every device used to land pending until an existing one approved it, and that
+// gate is gone. It had already stopped being a gate: an emailed code activates a
+// device and collects its keys from escrow, and so does a sign-in on a browser
+// already signed in to another OwnSpce surface. What it still did was strand
+// people — somebody who lost every device had nothing left to approve with, and
+// sat on a screen polling a status that would never change.
+//
+// So signing in IS the gate now. Proving the account with Google or a mailed
+// code is the whole check, and the caller hands the new device its space keys
+// from the account escrow copy immediately afterwards.
+//
 // Args: ctx, userID, label, platform, publicKey (32B X25519)
 // Returns: device (existing row if this public key is already registered), error
-// Handles: repeat registration of the same key (idempotent), first-device bootstrap
+// Handles: repeat registration of the same key, which returns the existing row
+// rather than minting a second device for one browser
 func (s *Store) RegisterDevice(ctx context.Context, userID uuid.UUID, label, platform string, publicKey []byte) (*Device, error) {
 	var device *Device
 	err := s.tx(ctx, func(tx pgx.Tx) error {
@@ -72,19 +83,11 @@ func (s *Store) RegisterDevice(ctx context.Context, userID uuid.UUID, label, pla
 			return err
 		}
 
-		var liveCount int
-		if err := tx.QueryRow(ctx, "SELECT count(*) FROM devices WHERE user_id = $1 AND status <> 'revoked'", userID).Scan(&liveCount); err != nil {
-			return err
-		}
-		status := DeviceStatusPending
-		var via *string
-		if liveCount == 0 {
-			status = DeviceStatusActive
-			first := ApprovedViaFirst
-			via = &first
-		}
-
-		device, err = scanDevice(tx.QueryRow(ctx, "INSERT INTO devices (user_id, label, platform, public_key, status, approved_via) VALUES ($1, $2, $3, $4, $5, $6) RETURNING "+deviceColumns, userID, label, platform, publicKey, status, via))
+		// approved_via stays null for a device admitted this way. The column
+		// records which of the old approval routes let a device in, and none of
+		// them did — the sign-in did. Null now reads as "signed in", which is
+		// also what it means for every device registered from here on.
+		device, err = scanDevice(tx.QueryRow(ctx, "INSERT INTO devices (user_id, label, platform, public_key, status, approved_via) VALUES ($1, $2, $3, $4, $5, NULL) RETURNING "+deviceColumns, userID, label, platform, publicKey, DeviceStatusActive))
 		return err
 	})
 	return device, err
@@ -140,14 +143,14 @@ type WrappedSpaceKey struct {
 
 // ApproveDevice activates a pending device and stores the space keys wrapped to
 // its public key, in one transaction.
-// Args: ctx, userID, deviceID (the pending device), approverDeviceID (nil for the
-// recovery-phrase and email paths), via (how it was let in), keys (wrapped space
-// keys)
+// Args: ctx, userID, deviceID (the device to admit), approverDeviceID (nil when
+// no other device vouched), via (how it was let in, or nil when a sign-in was the
+// whole check), keys (wrapped space keys)
 // Returns: activated device, error
 // Handles: device not found or owned by another user (ErrNotFound), already-active
 // device (idempotent), keys for spaces the user no longer belongs to or whose
 // epoch has since rotated (silently skipped so the client retries with fresh keys)
-func (s *Store) ApproveDevice(ctx context.Context, userID, deviceID uuid.UUID, approverDeviceID *uuid.UUID, via string, keys []WrappedSpaceKey) (*Device, error) {
+func (s *Store) ApproveDevice(ctx context.Context, userID, deviceID uuid.UUID, approverDeviceID *uuid.UUID, via *string, keys []WrappedSpaceKey) (*Device, error) {
 	var device *Device
 	err := s.tx(ctx, func(tx pgx.Tx) error {
 		d, err := scanDevice(tx.QueryRow(ctx, "SELECT "+deviceColumns+" FROM devices WHERE id = $1 AND user_id = $2 AND status <> 'revoked' FOR UPDATE", deviceID, userID))

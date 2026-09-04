@@ -94,6 +94,7 @@ func (s *Server) moneyRoutes(r chi.Router) {
 				r.With(s.rateLimit(ratelimit.MoneyWrite, subjectUser)).Post("/keys", s.handleGrantKeys)
 				r.With(s.rateLimit(ratelimit.MoneyRead, subjectUser)).Get("/invites", s.handleListInvites)
 				r.With(s.rateLimit(ratelimit.MoneyInvite, subjectUser)).Post("/invites", s.handleCreateInvite)
+				r.With(s.rateLimit(ratelimit.MoneyWrite, subjectUser)).Post("/invites/{inviteID}/key", s.handleFileInviteKey)
 				r.With(s.rateLimit(ratelimit.MoneyWrite, subjectUser)).Delete("/invites/{inviteID}", s.handleRevokeInvite)
 			})
 		})
@@ -713,17 +714,28 @@ func (s *Server) handleListInvites(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(invites))
 	for _, i := range invites {
-		out = append(out, map[string]any{"id": i.ID, "email": i.Email, "role": i.Role, "invitedBy": i.InvitedBy, "expiresAt": i.ExpiresAt, "createdAt": i.CreatedAt})
+		out = append(out, map[string]any{"id": i.ID, "email": i.Email, "role": i.Role, "invitedBy": i.InvitedBy, "expiresAt": i.ExpiresAt, "createdAt": i.CreatedAt, "userId": i.InviteeUserID, "keyFiled": i.KeyFiledAt != nil})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"invites": out})
 }
 
-// handleCreateInvite mints a household invitation.
+// handleCreateInvite mints a household invitation and provisions the account
+// the household key will be sealed to.
 //
 // The plaintext token is returned once and never again: only its SHA-256 lands
 // in the database, so a dump of money_invites yields no working invite links.
-// Redeeming one makes the caller a member, which is permission to be handed the
-// space key and not the key itself — see handleGrantKeys.
+//
+// The second half is what deleted the approver. An invited address gets an
+// account escrow identity here — created for the address if nobody has ever
+// signed in with it — and the public half comes back in this response. The
+// owner, who is the only party holding the household key in the clear, wraps it
+// to that key and posts it to handleFileInviteKey. From then on the invitee is
+// simply a member, and signing in on any device collects the key from escrow
+// like any other returning device would.
+//
+// escrowPublicKey is null when this deployment has no escrow master key. There
+// is then nothing to seal to, and the client falls back to the older flow of
+// wrapping for the invitee's devices once they appear — see handleKeyGaps.
 func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email string `json:"email"`
@@ -752,12 +764,132 @@ func (s *Server) handleCreateInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	invite, err := s.store.CreateMoneyInvite(r.Context(), spaceIDFrom(r), email, body.Role, hash, callerFrom(r.Context()).UserID, time.Now().UTC().Add(inviteTTL))
+	inviteeID, escrowPublic, err := s.provisionInvitee(r.Context(), email)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	spaceID := spaceIDFrom(r)
+	invite, err := s.store.CreateMoneyInvite(r.Context(), spaceID, email, body.Role, hash, callerFrom(r.Context()).UserID, inviteeID, time.Now().UTC().Add(inviteTTL))
 	if err != nil {
 		writeError(w, storeError(err, "no money household here", "invite_exists", "that address already has an open invite to this household", "", ""))
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": invite.ID, "email": invite.Email, "role": invite.Role, "token": token, "expiresAt": invite.ExpiresAt})
+
+	meta, err := s.store.SpaceMeta(r.Context(), spaceID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":        invite.ID,
+		"email":     invite.Email,
+		"role":      invite.Role,
+		"invitedBy": invite.InvitedBy,
+		"token":     token,
+		"expiresAt": invite.ExpiresAt,
+		"createdAt": invite.CreatedAt,
+		"userId":    inviteeID,
+		// Always false here, and present rather than omitted: this is the same
+		// shape GET /invites returns, and a client reading keyFiled off one of
+		// them must not get a boolean from one and undefined from the other.
+		// The key lands on the next call, not this one.
+		"keyFiled":        false,
+		"escrowPublicKey": encodeB64OrNil(escrowPublic),
+		"keyEpoch":        meta.KeyEpoch,
+	})
+}
+
+// provisionInvitee resolves an invited address to the account whose escrow
+// identity the household key will be sealed to, creating that account if the
+// address has never signed in.
+//
+// A row for somebody who has not signed up yet is the price of the invitee
+// never having to wait for anyone. It is an ordinary users row with no provider
+// identity and no device, and UpsertUserByProvider already adopts a row by
+// address — so when that person does sign in, by Google, by Apple or by a
+// mailed code, they land on it and find the household already theirs.
+// Args: ctx, email (already validated)
+// Returns: the account id and its escrow public key, or (nil, nil, nil) when
+// this deployment has no escrow and the key therefore cannot travel with the
+// invite
+// Handles: an account that predates escrow, which is minted one here
+func (s *Server) provisionInvitee(ctx context.Context, email string) (*uuid.UUID, []byte, error) {
+	if !s.escrow.Configured() {
+		return nil, nil, nil
+	}
+
+	invitee, _, err := s.store.UpsertUserByEmail(ctx, email)
+	if err != nil {
+		return nil, nil, err
+	}
+	escrowPublic := s.ensureEscrowKey(ctx, invitee.ID)
+	if len(escrowPublic) == 0 {
+		return nil, nil, nil
+	}
+	return &invitee.ID, escrowPublic, nil
+}
+
+type fileInviteKeyRequest struct {
+	KeyEpoch   int    `json:"keyEpoch"`
+	WrappedKey string `json:"wrappedKey"`
+}
+
+// handleFileInviteKey lands the household key on an invitation, which is the
+// call that makes the invitee a member.
+//
+// It is a second request rather than part of creating the invite because the
+// server cannot do the wrapping: it does not hold the household key and the
+// whole design depends on it never holding one. So the invite is created, the
+// owner's client seals the key to the escrow public key that came back, and
+// posts it here.
+//
+// An invite whose second call never arrives is an invite with no key. It stays
+// listed and expires like any other, and the owner is shown that it has not
+// landed rather than the invitee discovering it.
+func (s *Server) handleFileInviteKey(w http.ResponseWriter, r *http.Request) {
+	inviteID, err := parseUUIDParam(chi.URLParam(r, "inviteID"), "inviteId")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	var req fileInviteKeyRequest
+	if err := decodeJSON(w, r, maxSmallBody, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if req.KeyEpoch <= 0 {
+		writeError(w, badRequest("keyEpoch must be the household's current key epoch"))
+		return
+	}
+	wrapped, err := decodeB64(req.WrappedKey, "wrappedKey")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := seal.ValidateWrappedKey(wrapped); err != nil {
+		writeError(w, badRequest("%v", err))
+		return
+	}
+
+	userID, err := s.store.FileMoneyInviteKey(r.Context(), spaceIDFrom(r), inviteID, callerFrom(r.Context()).UserID, req.KeyEpoch, wrapped)
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrConflict):
+			writeError(w, errConflict("stale_epoch", "the household key rotated while you were wrapping; create the invite again"))
+		case errors.Is(err, store.ErrForbidden):
+			writeError(w, errForbidden("no_escrow_identity", "this invite has no account to seal the household key to; invite the address again"))
+		case errors.Is(err, store.ErrNotFound):
+			writeError(w, errNotFound("that invite is no longer open"))
+		default:
+			writeError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"userId": userID, "spaceId": spaceIDFrom(r)})
 }
 
 // mintInviteToken generates an invite secret and the hash stored for it.
@@ -792,10 +924,15 @@ func (s *Server) handleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 
 // handleAcceptInvite redeems an invitation token and joins the household.
 //
-// It is mounted outside the space router because the caller is by definition not
-// yet a member, so no space-scoped middleware could authorize them. The response
-// says plainly that the ledger is still locked: the invitee holds a membership
-// and no key until an owner wraps one for their devices.
+// It is mounted outside the space router because the caller may not be a member
+// yet, so no space-scoped middleware could authorize them.
+//
+// Its job shrank. An invite created since the household key started travelling
+// with it has already made its invitee a member, so following the link is
+// navigation and this call is a no-op that answers with the household to open.
+// It stays because links sent before that change are still in inboxes, and
+// because a token redeemed by somebody whose address differs from the one the
+// invite names is still the only way they get in.
 func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Token string `json:"token"`
@@ -820,5 +957,5 @@ func (s *Server) handleAcceptInvite(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"spaceId": spaceID, "awaitingKey": true})
+	writeJSON(w, http.StatusOK, map[string]any{"spaceId": spaceID})
 }

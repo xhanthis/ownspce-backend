@@ -1,13 +1,19 @@
 package httpapi
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
 	"fmt"
+	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/ownspce/backend/pkg/seal"
+	"github.com/ownspce/backend/pkg/store"
+	"golang.org/x/crypto/nacl/box"
 )
 
 // TestRoutesBuildWithoutConflict is the cheapest guard against a startup panic.
@@ -412,68 +418,196 @@ func TestNonMemberCannotReachAHousehold(t *testing.T) {
 	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", stranger, body), http.StatusNotFound)
 }
 
-// TestInviteMakesAMemberWhoStillHoldsNoKey is the shape of collaboration under
-// end-to-end encryption, and the part most likely to be got wrong. Redeeming an
-// invite is permission to be handed the ledger; it is not the ledger. Until an
-// owner wraps the space key for the new member's device, they can read the rows
-// and open none of them.
-func TestInviteMakesAMemberWhoStillHoldsNoKey(t *testing.T) {
+// TestInviteCarriesTheHouseholdKey is the whole of the new collaboration flow,
+// end to end.
+//
+// It used to be that redeeming an invite was permission to be handed the ledger
+// and not the ledger: the invitee became a member, saw rows they could not open,
+// and waited for an owner to next open Money and wrap the key for them. That
+// wait was the worst screen in the product, because nothing on it was
+// actionable by the person looking at it.
+//
+// Now the key travels with the invite. Creating one provisions the invited
+// address an escrow identity; the owner — the only party holding the household
+// key in the clear — seals it to that identity while they still have it; and
+// the invitee signs in and reads the ledger on first paint, having approved
+// nothing and waited for nobody. If this test passes with the original space
+// key coming back out, that promise holds.
+func TestInviteCarriesTheHouseholdKey(t *testing.T) {
+	// Arrange — a household whose key is wrapped for the owner's device and for
+	// the owner's account escrow key, which is what a client does at creation.
 	h := newHarness(t)
 	owner := h.signUp("owner")
-	guest := h.signUp("guest")
-	spaceID := h.createHousehold(owner)
+	ownerEscrow := h.escrowPublicKey(t, owner.UserID)
+
+	spaceKey := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, spaceKey); err != nil {
+		t.Fatalf("random space key: %v", err)
+	}
+	var ownerDevicePublic [32]byte
+	copy(ownerDevicePublic[:], owner.PublicKey)
+
+	spaceID := uuid.NewString()
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households", owner, map[string]any{
+		"spaceId": spaceID,
+		"wrappedKeys": []map[string]any{
+			{"deviceId": owner.DeviceID.String(), "wrappedKey": encodeB64(sealTo(t, spaceKey, ownerDevicePublic))},
+			{"wrappedKey": encodeB64(sealTo(t, spaceKey, ownerEscrow))},
+		},
+		"ciphertext": sealed(t),
+	}), http.StatusCreated)
 	h.putEntry(owner, spaceID, today())
 
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "amma@home.in", "role": "editor"})
+	// Act, part one — invite an address nobody has ever signed in with.
+	guestEmail := fmt.Sprintf("amma-%s@ownspce.test", uuid.NewString())
+	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": guestEmail, "role": "editor"})
 	requireStatus(t, rec, http.StatusCreated)
-	token := decodeBody(t, rec)["token"].(string)
+	invite := decodeBody(t, rec)
 
-	// The same address twice is a conflict, not a second live invite.
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "amma@home.in"}), http.StatusConflict)
-
-	accepted := h.do(http.MethodPost, "/v1/money/invites/accept", guest, map[string]any{"token": token})
-	requireStatus(t, accepted, http.StatusOK)
-	if decodeBody(t, accepted)["awaitingKey"] != true {
-		t.Error("accepting an invite did not say the ledger is still locked")
+	// The create and list shapes have to agree: a client reading keyFiled off
+	// one of them must not get a boolean from one and undefined from the other.
+	for _, field := range []string{"id", "email", "role", "invitedBy", "token", "expiresAt", "createdAt", "userId", "keyFiled", "escrowPublicKey", "keyEpoch"} {
+		if _, present := invite[field]; !present {
+			t.Errorf("the created invite is missing %q", field)
+		}
+	}
+	if invite["keyFiled"] != false {
+		t.Errorf("keyFiled = %v on a freshly minted invite, want false", invite["keyFiled"])
 	}
 
-	// A member, but keyless: the household lists with a null wrappedKey.
+	guestID, ok := invite["userId"].(string)
+	if !ok || guestID == "" {
+		t.Fatal("the invite provisioned no account to seal the household key to")
+	}
+	h.users = append(h.users, uuid.MustParse(guestID))
+
+	rawEscrow, ok := invite["escrowPublicKey"].(string)
+	if !ok || rawEscrow == "" {
+		t.Fatal("the invite carried no escrow public key, so the household key cannot travel with it")
+	}
+	var guestEscrow [32]byte
+	copy(guestEscrow[:], decodeKey(t, rawEscrow))
+
+	// The same address twice is a conflict, not a second live invite.
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": guestEmail}), http.StatusConflict)
+
+	// Act, part two — the owner seals the household key to that identity.
+	epoch := int(invite["keyEpoch"].(float64))
+	filed := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites/"+invite["id"].(string)+"/key", owner, map[string]any{
+		"keyEpoch":   epoch,
+		"wrappedKey": encodeB64(sealTo(t, spaceKey, guestEscrow)),
+	})
+	requireStatus(t, filed, http.StatusOK)
+
+	// Act, part three — the invitee signs in for the very first time.
+	guestPublic, guestPrivate := deviceKeypair(t)
+	code := h.issueSignInCode(guestEmail, nil)
+	session := h.doFrom(http.MethodPost, "/v1/auth/session", nil, sessionBody(guestEmail, code, guestPublic[:]))
+	requireStatus(t, session, http.StatusOK)
+	body := decodeBody(t, session)
+	if device := body["device"].(map[string]any); device["status"] != store.DeviceStatusActive {
+		t.Fatalf("the invitee's first device status = %v, want active", device["status"])
+	}
+	guest := &actor{UserID: uuid.MustParse(guestID), Token: body["accessToken"].(string), PublicKey: guestPublic[:]}
+
+	// Assert — a member, with a key, on first paint. No approval, no waiting.
 	list := h.do(http.MethodGet, "/v1/money/households", guest, nil)
 	requireStatus(t, list, http.StatusOK)
 	households := decodeBody(t, list)["households"].([]any)
 	if len(households) != 1 {
-		t.Fatalf("guest sees %d households, want 1", len(households))
+		t.Fatalf("the invitee sees %d households, want 1", len(households))
 	}
-	if households[0].(map[string]any)["wrappedKey"] != nil {
-		t.Fatal("a freshly invited member was handed a space key")
+	household := households[0].(map[string]any)
+	if household["spaceId"] != spaceID {
+		t.Fatalf("landed in %v, want %s", household["spaceId"], spaceID)
 	}
-
-	// The owner sees exactly that gap, wraps, and files it.
-	gapsRec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/key-gaps", owner, nil)
-	requireStatus(t, gapsRec, http.StatusOK)
-	var guestGap map[string]any
-	for _, raw := range decodeBody(t, gapsRec)["gaps"].([]any) {
-		gap := raw.(map[string]any)
-		if gap["userId"] == guest.UserID.String() && gap["deviceId"] != nil {
-			guestGap = gap
-		}
-	}
-	if guestGap == nil {
-		t.Fatal("the new member's device was not reported as a key gap")
+	if household["role"] != "editor" {
+		t.Fatalf("role = %v, want editor", household["role"])
 	}
 
-	grant := map[string]any{"keyEpoch": 1, "wrappedKeys": []map[string]any{{"userId": guest.UserID.String(), "deviceId": guestGap["deviceId"], "wrappedKey": wrappedKey(t)}}}
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/keys", owner, grant), http.StatusOK)
-
-	after := h.do(http.MethodGet, "/v1/money/households", guest, nil)
-	requireStatus(t, after, http.StatusOK)
-	if decodeBody(t, after)["households"].([]any)[0].(map[string]any)["wrappedKey"] == nil {
-		t.Fatal("the granted key did not reach the member's device")
+	wrapped, ok := household["wrappedKey"].(string)
+	if !ok || wrapped == "" {
+		t.Fatal("the invitee was let in without a household key, which is the screen this change exists to delete")
+	}
+	opened, ok := box.OpenAnonymous(nil, decodeKey(t, wrapped), &guestPublic, &guestPrivate)
+	if !ok {
+		t.Fatal("the invitee could not open the key they were given")
+	}
+	if !bytes.Equal(opened, spaceKey) {
+		t.Fatal("the invitee opened a different key than the household was sealed with")
 	}
 
-	// A spent token cannot be redeemed again.
-	third := h.signUp("third")
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", third, map[string]any{"token": token}), http.StatusNotFound)
+	// And the ledger behind it is readable.
+	entries := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/entries?from="+daysAgo(1)+"&to="+today(), guest, nil)
+	requireStatus(t, entries, http.StatusOK)
+	if rows := decodeBody(t, entries)["entries"].([]any); len(rows) != 1 {
+		t.Fatalf("the invitee sees %d ledger rows, want 1", len(rows))
+	}
+
+	// The invite is spent: it no longer sits in the owner's outstanding list.
+	open := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/invites", owner, nil)
+	requireStatus(t, open, http.StatusOK)
+	if invites := decodeBody(t, open)["invites"].([]any); len(invites) != 0 {
+		t.Fatalf("%d invites still outstanding after the key landed, want 0", len(invites))
+	}
+}
+
+// TestFilingAnInviteKeyTwiceIsRefused stops a replayed wrap from re-adding
+// somebody an owner has since removed from the household.
+func TestFilingAnInviteKeyTwiceIsRefused(t *testing.T) {
+	// Arrange
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	ownerEscrow := h.escrowPublicKey(t, owner.UserID)
+
+	spaceKey := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, spaceKey); err != nil {
+		t.Fatalf("random space key: %v", err)
+	}
+	var ownerDevicePublic [32]byte
+	copy(ownerDevicePublic[:], owner.PublicKey)
+
+	spaceID := uuid.NewString()
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households", owner, map[string]any{
+		"spaceId": spaceID,
+		"wrappedKeys": []map[string]any{
+			{"deviceId": owner.DeviceID.String(), "wrappedKey": encodeB64(sealTo(t, spaceKey, ownerDevicePublic))},
+			{"wrappedKey": encodeB64(sealTo(t, spaceKey, ownerEscrow))},
+		},
+		"ciphertext": sealed(t),
+	}), http.StatusCreated)
+
+	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": fmt.Sprintf("twice-%s@ownspce.test", uuid.NewString())})
+	requireStatus(t, rec, http.StatusCreated)
+	invite := decodeBody(t, rec)
+	h.users = append(h.users, uuid.MustParse(invite["userId"].(string)))
+
+	var guestEscrow [32]byte
+	copy(guestEscrow[:], decodeKey(t, invite["escrowPublicKey"].(string)))
+	path := "/v1/money/households/" + spaceID + "/invites/" + invite["id"].(string) + "/key"
+	body := map[string]any{"keyEpoch": int(invite["keyEpoch"].(float64)), "wrappedKey": encodeB64(sealTo(t, spaceKey, guestEscrow))}
+
+	// Act
+	requireStatus(t, h.do(http.MethodPost, path, owner, body), http.StatusOK)
+	replay := h.do(http.MethodPost, path, owner, body)
+
+	// Assert — and a wrap computed against a rotated epoch is refused too.
+	requireStatus(t, replay, http.StatusNotFound)
+
+	fresh := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": fmt.Sprintf("stale-%s@ownspce.test", uuid.NewString())})
+	requireStatus(t, fresh, http.StatusCreated)
+	staleInvite := decodeBody(t, fresh)
+	h.users = append(h.users, uuid.MustParse(staleInvite["userId"].(string)))
+	copy(guestEscrow[:], decodeKey(t, staleInvite["escrowPublicKey"].(string)))
+
+	stale := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites/"+staleInvite["id"].(string)+"/key", owner, map[string]any{
+		"keyEpoch":   int(staleInvite["keyEpoch"].(float64)) + 1,
+		"wrappedKey": encodeB64(sealTo(t, spaceKey, guestEscrow)),
+	})
+	requireStatus(t, stale, http.StatusConflict)
+	if code := errorCode(t, stale); code != "stale_epoch" {
+		t.Errorf("code = %q, want stale_epoch", code)
+	}
 }
 
 func TestForgedInviteTokenIsRejected(t *testing.T) {
@@ -533,20 +667,35 @@ func TestViewerCannotWriteAndEditorCannotGrantKeys(t *testing.T) {
 	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", editor, map[string]any{"email": "x@home.in"}), http.StatusForbidden)
 }
 
-// TestPendingDeviceIsKeptOutOfTheLedger checks money now sits behind device
-// approval. A second browser lands pending, and pending devices hold no space
-// key — letting one in would show a wall of ciphertext, not a ledger.
-func TestPendingDeviceIsKeptOutOfTheLedger(t *testing.T) {
+// TestASecondBrowserReachesTheLedgerImmediately is the money side of device
+// approval being gone. A second browser used to land pending and be refused
+// every money route; it is now in the account from the moment it registers, and
+// what it can read is decided by the keys wrapped for it rather than by a
+// waiting room.
+func TestASecondBrowserReachesTheLedgerImmediately(t *testing.T) {
 	h := newHarness(t)
 	owner := h.signUp("owner")
 	spaceID := h.createHousehold(owner)
 
 	second := h.addDevice(owner.UserID, "second browser")
-	if second.Status != "pending" {
-		t.Fatalf("second device status = %q, want pending", second.Status)
+	if second.Status != store.DeviceStatusActive {
+		t.Fatalf("second device status = %q, want active", second.Status)
 	}
-	requireStatus(t, h.do(http.MethodGet, "/v1/money/households", second, nil), http.StatusForbidden)
-	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/vault", second, nil), http.StatusForbidden)
+
+	list := h.do(http.MethodGet, "/v1/money/households", second, nil)
+	requireStatus(t, list, http.StatusOK)
+	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/vault", second, nil), http.StatusOK)
+
+	// This household was created with a device wrap only, so there is nothing in
+	// escrow to restore and the browser is in without being able to read a row.
+	// That is honest, and it is the case the key-gaps repair path exists for.
+	households := decodeBody(t, list)["households"].([]any)
+	if len(households) != 1 {
+		t.Fatalf("got %d households, want 1", len(households))
+	}
+	if households[0].(map[string]any)["wrappedKey"] != nil {
+		t.Error("a household with no escrow copy handed a key to a device nobody wrapped one for")
+	}
 }
 
 // TestEntryRangeBoundsAreValidated keeps a malformed period from being read as
@@ -564,20 +713,22 @@ func TestEntryRangeBoundsAreValidated(t *testing.T) {
 	requireStatus(t, h.do(http.MethodGet, base+"?from="+daysAgo(5)+"&to="+today()+"&limit=501", owner, nil), http.StatusBadRequest)
 }
 
-// TestPendingDeviceCannotSelfApprove closes the hole that would make device
-// approval decorative. Money sits behind an active device, so a pending device
-// that could activate itself would walk straight past the gate. The only
-// self-approval left is a mailed code, and it is tested in email_auth_test.go.
-func TestPendingDeviceCannotSelfApprove(t *testing.T) {
+// TestADeviceCannotFileItsOwnKeys keeps the one part of approval that still
+// means something. A device is in the account the moment it signs in, but the
+// keys it holds have to have been wrapped by somebody who held the plaintext —
+// itself included would make the whole scheme decorative, since a device could
+// then file wraps for spaces it was never given. The only self-service route
+// left is a mailed code, where the server does the wrapping from escrow.
+func TestADeviceCannotFileItsOwnKeys(t *testing.T) {
 	h := newHarness(t)
 	owner := h.signUp("owner")
 	h.createHousehold(owner)
 
-	pending := h.addDevice(owner.UserID, "attacker browser")
-	path := "/v1/devices/" + pending.DeviceID.String() + "/approve"
+	second := h.addDevice(owner.UserID, "attacker browser")
+	path := "/v1/devices/" + second.DeviceID.String() + "/approve"
 
 	// Act
-	empty := h.do(http.MethodPost, path, pending, map[string]any{"wrappedKeys": []any{}})
+	empty := h.do(http.MethodPost, path, second, map[string]any{"wrappedKeys": []any{}})
 
 	// Assert
 	requireStatus(t, empty, http.StatusForbidden)
@@ -585,12 +736,17 @@ func TestPendingDeviceCannotSelfApprove(t *testing.T) {
 		t.Errorf("code = %q, want approval_required", code)
 	}
 
-	// Still pending, and still locked out of the ledger.
-	requireStatus(t, h.do(http.MethodGet, "/v1/money/households", pending, nil), http.StatusForbidden)
-
 	// Supplying wraps it invented does not help either.
-	invented := h.do(http.MethodPost, path, pending, map[string]any{"wrappedKeys": []map[string]any{
+	invented := h.do(http.MethodPost, path, second, map[string]any{"wrappedKeys": []map[string]any{
 		{"spaceId": uuid.NewString(), "keyEpoch": 1, "wrappedKey": wrappedKey(t)},
 	}})
 	requireStatus(t, invented, http.StatusForbidden)
+
+	var keys int
+	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM space_keys WHERE device_id = $1", second.DeviceID).Scan(&keys); err != nil {
+		t.Fatalf("count space keys: %v", err)
+	}
+	if keys != 0 {
+		t.Fatalf("a refused self-approval still filed %d space keys", keys)
+	}
 }

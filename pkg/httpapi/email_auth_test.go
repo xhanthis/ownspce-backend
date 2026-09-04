@@ -158,9 +158,9 @@ func TestEmailCodeSignsIntoTheSameAccountAsGoogle(t *testing.T) {
 	if body["user"].(map[string]any)["id"] != user.ID.String() {
 		t.Fatalf("signed into %v, want %s", body["user"].(map[string]any)["id"], user.ID)
 	}
-	// A second device on an existing account still has to be let in.
-	if device := body["device"].(map[string]any); device["status"] != store.DeviceStatusPending {
-		t.Fatalf("second device status = %v, want pending", device["status"])
+	// And the browser they typed the code on is in, not waiting on anything.
+	if device := body["device"].(map[string]any); device["status"] != store.DeviceStatusActive {
+		t.Fatalf("second device status = %v, want active", device["status"])
 	}
 }
 
@@ -231,23 +231,30 @@ func TestEmailCodeSendRevealsNothingAboutTheAddress(t *testing.T) {
 	requireStatus(t, h.doFrom(http.MethodPost, "/v1/auth/email/code", nil, map[string]any{"email": "not-an-address"}), http.StatusBadRequest)
 }
 
-func TestEmailVerificationActivatesAPendingDeviceWithoutKeys(t *testing.T) {
-	// Arrange — an account whose second device is pending and whose household
-	// has no escrow wrap, so there is nothing for the server to hand over.
+// TestEmailVerificationInventsNoKeys is what is left of the device email code
+// now that nothing is waiting to be activated.
+//
+// The route survives as the repair path: a device already in the account, but
+// holding no key for a household created before escrow existed, spends a mailed
+// code and the server hands over whatever the escrow copies can produce. The
+// property worth pinning is the negative one — when there is no escrow copy,
+// the answer is zero keys and not a fabricated one, because a key the device
+// cannot decrypt with would render the ledger as noise rather than as an
+// honest empty.
+func TestEmailVerificationInventsNoKeys(t *testing.T) {
+	// Arrange — a second device on an account whose household has no escrow
+	// wrap, so there is nothing for the server to hand over.
 	h := newHarness(t)
 	first := h.signUp("first device")
-	pending := h.addDevice(first.UserID, "second device")
-	if pending.Status != store.DeviceStatusPending {
-		t.Fatalf("second device status = %s, want pending", pending.Status)
-	}
+	second := h.addDevice(first.UserID, "second device")
 	user, err := h.store.GetUser(context.Background(), first.UserID)
 	if err != nil {
 		t.Fatalf("load user: %v", err)
 	}
-	code := h.issueDeviceCode(user.Email, first.UserID, pending.DeviceID)
+	code := h.issueDeviceCode(user.Email, first.UserID, second.DeviceID)
 
 	// Act
-	rec := h.do(http.MethodPost, "/v1/devices/"+pending.DeviceID.String()+"/approve", pending, map[string]any{"emailCode": code})
+	rec := h.do(http.MethodPost, "/v1/devices/"+second.DeviceID.String()+"/approve", second, map[string]any{"emailCode": code})
 
 	// Assert — in, labelled as in by email, and holding nothing.
 	requireStatus(t, rec, http.StatusOK)
@@ -260,7 +267,7 @@ func TestEmailVerificationActivatesAPendingDeviceWithoutKeys(t *testing.T) {
 	}
 
 	var keys int
-	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM space_keys WHERE device_id = $1", pending.DeviceID).Scan(&keys); err != nil {
+	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM space_keys WHERE device_id = $1", second.DeviceID).Scan(&keys); err != nil {
 		t.Fatalf("count space keys: %v", err)
 	}
 	if keys != 0 {
@@ -268,8 +275,12 @@ func TestEmailVerificationActivatesAPendingDeviceWithoutKeys(t *testing.T) {
 	}
 }
 
+// TestDeviceCodeCannotActivateADifferentDevice keeps a mailed code bound to the
+// device it was minted for. The code is what makes the server open the account
+// escrow key, so a code redeemable by any device on the account would let the
+// wrong browser collect every household key with one intercepted email.
 func TestDeviceCodeCannotActivateADifferentDevice(t *testing.T) {
-	// Arrange — two pending devices on one account.
+	// Arrange — two devices on one account, a code minted for exactly one.
 	h := newHarness(t)
 	first := h.signUp("first device")
 	target := h.addDevice(first.UserID, "the one that asked")
@@ -283,14 +294,21 @@ func TestDeviceCodeCannotActivateADifferentDevice(t *testing.T) {
 	// Act — the other device tries to spend the code minted for the target.
 	rec := h.do(http.MethodPost, "/v1/devices/"+other.DeviceID.String()+"/approve", other, map[string]any{"emailCode": code})
 
-	// Assert
+	// Assert — refused, and it collected nothing on the way past.
 	requireStatus(t, rec, http.StatusUnauthorized)
 	device, err := h.store.LiveDevice(context.Background(), other.DeviceID)
 	if err != nil {
 		t.Fatalf("reload device: %v", err)
 	}
-	if device.Status != store.DeviceStatusPending {
-		t.Fatalf("status = %s, want it left pending", device.Status)
+	if device.ApprovedVia != nil {
+		t.Fatalf("approvedVia = %q, want it left unset by a code it could not spend", *device.ApprovedVia)
+	}
+	var keys int
+	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM space_keys WHERE device_id = $1", other.DeviceID).Scan(&keys); err != nil {
+		t.Fatalf("count space keys: %v", err)
+	}
+	if keys != 0 {
+		t.Fatalf("a rejected code still filed %d space keys", keys)
 	}
 }
 
