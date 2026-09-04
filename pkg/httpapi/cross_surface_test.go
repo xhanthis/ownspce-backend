@@ -303,3 +303,36 @@ func TestContinueGivesTheNewSurfaceTheHouseholdKey(t *testing.T) {
 		t.Fatalf("escrow wraps = %d, want 1", escrowWraps)
 	}
 }
+
+// TestRefreshLetsInADeviceStrandedByTheOldFlow covers the rows the schema still
+// carries. A device left `pending` when approval was removed holds a live
+// refresh token and never passes through sign-in again, so without this it
+// would sit on 403 for the rest of its life while refreshing happily every
+// quarter hour.
+func TestRefreshLetsInADeviceStrandedByTheOldFlow(t *testing.T) {
+	// Arrange — a device in exactly the state the old flow left them in.
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	stranded := h.addDevice(owner.UserID, "a browser from before")
+	if _, err := h.store.Pool().Exec(context.Background(), "UPDATE devices SET status = 'pending' WHERE id = $1", stranded.DeviceID); err != nil {
+		t.Fatalf("strand device: %v", err)
+	}
+	requireStatus(t, h.do(http.MethodGet, "/v1/spaces", stranded, nil), http.StatusForbidden)
+
+	token, err := h.store.IssueRefreshToken(context.Background(), owner.UserID, stranded.DeviceID, "web", nil)
+	if err != nil {
+		t.Fatalf("issue refresh token: %v", err)
+	}
+
+	// Act
+	rec := h.doFrom(http.MethodPost, "/v1/auth/refresh", nil, map[string]any{"refreshToken": token.Plaintext})
+
+	// Assert — in, and the data plane opens on the next request.
+	requireStatus(t, rec, http.StatusOK)
+	body := decodeBody(t, rec)
+	if device := body["device"].(map[string]any); device["status"] != store.DeviceStatusActive {
+		t.Fatalf("device status = %v, want active", device["status"])
+	}
+	refreshed := &actor{UserID: owner.UserID, DeviceID: stranded.DeviceID, Token: body["accessToken"].(string)}
+	requireStatus(t, h.do(http.MethodGet, "/v1/spaces", refreshed, nil), http.StatusOK)
+}

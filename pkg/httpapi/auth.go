@@ -405,6 +405,9 @@ type refreshRequest struct {
 // handleAuthRefresh rotates a refresh token. Replaying a spent token revokes the
 // whole family, which turns a stolen refresh token into a detectable, self-limiting
 // incident rather than durable access.
+//
+// It is also where a device stranded by the old approval flow is let in, and
+// where the cross-surface cookie is kept alive.
 func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 	var req refreshRequest
 	if err := decodeJSON(w, r, maxSmallBody, &req); err != nil {
@@ -443,6 +446,15 @@ func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	// A device left pending by the old approval flow holds a live refresh token
+	// and never passes through sign-in again, so without this it would sit on
+	// 403 device_pending forever while its owner refreshed happily every
+	// quarter hour. Costs nothing for the active devices that are now every
+	// other device.
+	if device.Status != store.DeviceStatusActive {
+		device = s.admitDevice(r.Context(), rotated.UserID, device)
+	}
+
 	access, _, err := s.signer.Mint(rotated.UserID, rotated.DeviceID)
 	if err != nil {
 		writeError(w, err)
