@@ -79,6 +79,14 @@ func (s *Store) CreateSpace(ctx context.Context, ownerID uuid.UUID, keys []Devic
 // enforce that each named device really is an active device of that member. The
 // rows go out in one pgx batch: a single round trip, and no array parameters,
 // which the PgBouncer-safe exec query mode cannot encode.
+//
+// A recovery wrap (nil DeviceID) records the escrow public key it was sealed to,
+// and replaces an existing wrap only when that one was sealed to a different key
+// or to one nobody recorded. That is what lets a household sealed to a key the
+// server no longer holds be repaired by any device that still has the key,
+// while a repeat filing of a current wrap changes nothing and counts for nothing.
+// Args: ctx, tx, spaceID, epoch, memberID, actorID, keys
+// Returns: how many rows were written or replaced, error
 func insertWrappedKeys(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID, epoch int, memberID, actorID uuid.UUID, keys []DeviceWrappedKey) (int64, error) {
 	if len(keys) == 0 {
 		return 0, nil
@@ -87,7 +95,7 @@ func insertWrappedKeys(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID, epoch 
 	batch := &pgx.Batch{}
 	for _, k := range keys {
 		if k.DeviceID == nil {
-			batch.Queue("INSERT INTO space_keys (space_id, user_id, device_id, key_epoch, wrapped_key, created_by) SELECT $1, $2, NULL, $3, $4, $5 WHERE EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.recovery_public_key IS NOT NULL) ON CONFLICT DO NOTHING", spaceID, memberID, epoch, k.WrappedKey, actorID)
+			batch.Queue("INSERT INTO space_keys (space_id, user_id, device_id, key_epoch, wrapped_key, created_by, escrow_public_key) SELECT $1, $2, NULL, $3, $4, $5, u.recovery_public_key FROM users u WHERE u.id = $2 AND u.recovery_public_key IS NOT NULL ON CONFLICT (space_id, key_epoch, user_id, COALESCE(device_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO UPDATE SET wrapped_key = EXCLUDED.wrapped_key, escrow_public_key = EXCLUDED.escrow_public_key, created_by = EXCLUDED.created_by, created_at = now() WHERE space_keys.escrow_public_key IS DISTINCT FROM EXCLUDED.escrow_public_key", spaceID, memberID, epoch, k.WrappedKey, actorID)
 			continue
 		}
 		batch.Queue("INSERT INTO space_keys (space_id, user_id, device_id, key_epoch, wrapped_key, created_by) SELECT $1, $2, d.id, $3, $4, $5 FROM devices d WHERE d.id = $6 AND d.user_id = $2 AND d.status = 'active' ON CONFLICT DO NOTHING", spaceID, memberID, epoch, k.WrappedKey, actorID, *k.DeviceID)
@@ -334,16 +342,23 @@ type EscrowWrap struct {
 	WrappedKey []byte
 }
 
-// ListEscrowWraps returns every space key wrapped to the user's escrow key at
-// the current epoch.
+// ListEscrowWraps returns the escrow copy of every space key the device is
+// missing at the current epoch.
 //
 // These never leave the server. They are read only to be re-wrapped for a device
-// that has just proved the account's email address, which is the one moment the
-// escrow key is used at all.
-// Args: ctx, userID
-// Returns: one wrap per space that has one, oldest space first
-func (s *Store) ListEscrowWraps(ctx context.Context, userID uuid.UUID) ([]EscrowWrap, error) {
-	rows, err := s.pool.Query(ctx, "SELECT s.id, s.key_epoch, k.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL JOIN space_keys k ON k.space_id = s.id AND k.key_epoch = s.key_epoch AND k.user_id = m.user_id AND k.device_id IS NULL WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID)
+// that has proved the account, which is the one moment the escrow key is used
+// at all. Spaces the device already holds a key for are left out, so a device
+// that was handed one space by another device still collects the rest here.
+//
+// A wrap recorded as sealed to a different escrow public key than the account
+// now has is skipped: it predates the server minting the account's key and
+// cannot open under it. One with no recorded recipient is older than that
+// record and is tried anyway — the rewrap will say whether it opens.
+// Args: ctx, userID, deviceID (the device the wraps are for)
+// Returns: one wrap per space the device is missing and the account has an
+// escrow copy of, oldest space first
+func (s *Store) ListEscrowWraps(ctx context.Context, userID, deviceID uuid.UUID) ([]EscrowWrap, error) {
+	rows, err := s.pool.Query(ctx, "SELECT s.id, s.key_epoch, k.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL JOIN users u ON u.id = m.user_id JOIN space_keys k ON k.space_id = s.id AND k.key_epoch = s.key_epoch AND k.user_id = m.user_id AND k.device_id IS NULL AND (k.escrow_public_key IS NULL OR k.escrow_public_key = u.recovery_public_key) LEFT JOIN space_keys held ON held.space_id = s.id AND held.key_epoch = s.key_epoch AND held.user_id = m.user_id AND held.device_id = $2 WHERE m.user_id = $1 AND held.id IS NULL ORDER BY s.created_at ASC", userID, deviceID)
 	if err != nil {
 		return nil, err
 	}

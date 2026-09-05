@@ -32,7 +32,18 @@ No new key concept, no new table for keys.
 `RegisterDevice` inserts `status = 'active'` with `approved_via = NULL`. A device
 that has just proved the account — Google, Apple, a mailed code, or the shared
 cookie — is trusted from that moment, and `admitDevice()` immediately rewraps
-every escrow copy for it.
+the escrow copy of every space the device is missing for it. "Missing" is judged
+space by space, never by whether the device holds anything at all: a device
+another device handed one workspace key to still collects the rest from escrow.
+`GET /money/households` runs the same fill before it answers, so a device that
+signed in before a copy existed gets it on its next list rather than its next
+sign-in.
+
+A `space_keys` escrow row records the escrow public key it was sealed to
+(`escrow_public_key`). A row sealed to a key the account no longer has — the
+client-generated recovery key an account carried before the server minted one —
+is skipped at sign-in and reported by `key-gaps` as the member's recovery gap,
+so a device still holding the key re-seals it. Re-filing replaces the row.
 
 `approved_via = NULL` now reads as "signed in". Rows carrying the old values stay
 as historical record.
