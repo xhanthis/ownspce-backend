@@ -209,3 +209,77 @@ func recoveryGaps(t *testing.T, body map[string]any) []map[string]any {
 	}
 	return out
 }
+
+// createSpaceSealedTo creates a notes space whose key is sealed to the owner's
+// device and to the escrow public key the test hands it — a real seal, so the
+// server's rewrap either opens it or does not.
+func (h *harness) createSpaceSealedTo(owner *actor, spaceKey []byte, escrowPublic [32]byte) string {
+	h.t.Helper()
+	var ownerDevicePublic [32]byte
+	copy(ownerDevicePublic[:], owner.PublicKey)
+
+	rec := h.do(http.MethodPost, "/v1/spaces", owner, map[string]any{
+		"wrappedKeys": []map[string]any{
+			{"deviceId": owner.DeviceID.String(), "wrappedKey": encodeB64(sealTo(h.t, spaceKey, ownerDevicePublic))},
+			{"wrappedKey": encodeB64(sealTo(h.t, spaceKey, escrowPublic))},
+		},
+	})
+	requireStatus(h.t, rec, http.StatusCreated)
+	return decodeBody(h.t, rec)["id"].(string)
+}
+
+// spaceKeyFor lists spaces as the actor and returns the wrapped key the server
+// handed it for the named space, or "" when it was given none.
+func (h *harness) spaceKeyFor(a *actor, spaceID string) string {
+	h.t.Helper()
+	list := h.do(http.MethodGet, "/v1/spaces", a, nil)
+	requireStatus(h.t, list, http.StatusOK)
+	for _, raw := range decodeBody(h.t, list)["spaces"].([]any) {
+		space := raw.(map[string]any)
+		if space["id"] == spaceID {
+			wrapped, _ := space["wrappedKey"].(string)
+			return wrapped
+		}
+	}
+	h.t.Fatalf("space %s is not in the list", spaceID)
+	return ""
+}
+
+// TestListingSpacesFillsTheOneThisDeviceIsMissing is the notes-side twin of the
+// households test above. The notes client reads GET /spaces on every start and
+// never re-signs in on its own, so a copy re-sealed by another device after
+// this browser signed in has to reach it through the list — otherwise the
+// browser would decide it had no space at all and mint a fresh one.
+func TestListingSpacesFillsTheOneThisDeviceIsMissing(t *testing.T) {
+	// Arrange — a space with an escrow copy, and a browser that another device
+	// let in with a different space's key only.
+	h := newHarness(t)
+	owner := h.signUp("the laptop")
+	spaceKey := randomSpaceKey(t)
+	spaceID := h.createSpaceSealedTo(owner, spaceKey, h.escrowPublicKey(t, owner.UserID))
+
+	other := h.createSpace(owner)
+	browserPublic, browserPrivate := deviceKeypair(t)
+	device, err := h.store.RegisterDevice(context.Background(), owner.UserID, "the browser", "web", browserPublic[:])
+	if err != nil {
+		t.Fatalf("register device: %v", err)
+	}
+	requireStatus(t, h.do(http.MethodPost, "/v1/devices/"+device.ID.String()+"/approve", owner, map[string]any{
+		"wrappedKeys": []map[string]any{{"spaceId": other, "keyEpoch": 1, "wrappedKey": wrappedKey(t)}},
+	}), http.StatusOK)
+
+	token, _, err := h.server.signer.Mint(owner.UserID, device.ID)
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
+	}
+	browser := &actor{UserID: owner.UserID, DeviceID: device.ID, PublicKey: browserPublic[:], Token: token}
+
+	// Act — the notes client's start-up list.
+	wrapped := h.spaceKeyFor(browser, spaceID)
+
+	// Assert — the browser can open the space it was never handed directly.
+	if wrapped == "" {
+		t.Fatal("the browser was given no key for the space it was missing")
+	}
+	mustOpen(t, wrapped, browserPublic, browserPrivate, spaceKey)
+}

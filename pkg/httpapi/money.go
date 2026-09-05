@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -184,20 +183,11 @@ func objectJSON(o store.MoneyObject) map[string]any {
 // an empty ledger.
 //
 // Before listing, any household the device is missing is filled from the
-// account's escrow copy. Signing in already does this, but a device signed in
-// before a household got its escrow wrap — or before this deployment had an
-// escrow key at all — would otherwise sit on the waiting screen polling this
-// route until its owner thought to sign out and back in. The screen polls;
-// this is what makes the poll end.
+// account's escrow copy — see fillMissingKeys. The waiting screen polls this
+// route; the fill is what makes the poll end.
 func (s *Server) handleListHouseholds(w http.ResponseWriter, r *http.Request) {
 	c := callerFrom(r.Context())
-	if s.escrow.Configured() {
-		if device, err := s.store.LiveDevice(r.Context(), c.DeviceID); err != nil {
-			log.Printf("load device %s before listing households: %v", c.DeviceID, err)
-		} else {
-			s.admitDevice(r.Context(), c.UserID, device)
-		}
-	}
+	s.fillMissingKeys(r.Context(), c)
 
 	households, err := s.store.ListMoneyHouseholds(r.Context(), c.UserID, c.DeviceID)
 	if err != nil {

@@ -297,6 +297,29 @@ func (s *Server) admitDevice(ctx context.Context, userID uuid.UUID, device *stor
 	return admitted
 }
 
+// fillMissingKeys hands the calling device every space key it is still missing,
+// from the account's escrow copies, before a list it is about to read from.
+//
+// Sign-in already does this. But a device signed in before a space got its
+// escrow wrap — or before this deployment had an escrow key at all — would
+// otherwise sit on whatever it had, reading a list that could never change. The
+// lists are what a client uses to decide what it can open, so the lists are
+// where the gap is filled: for households and for spaces alike.
+// Args: ctx, the caller
+// Handles: escrow not configured, which is a no-op; a device that cannot be
+// loaded, which is logged and the list served as it stands
+func (s *Server) fillMissingKeys(ctx context.Context, c caller) {
+	if !s.escrow.Configured() {
+		return
+	}
+	device, err := s.store.LiveDevice(ctx, c.DeviceID)
+	if err != nil {
+		log.Printf("load device %s before filling its keys: %v", c.DeviceID, err)
+		return
+	}
+	s.admitDevice(ctx, c.UserID, device)
+}
+
 // userFromIDToken resolves a Google or Apple credential to an account.
 // Args: ctx, provider, the id token as the provider issued it
 // Returns: the user, whether this was their first sign-in, or an apiError
