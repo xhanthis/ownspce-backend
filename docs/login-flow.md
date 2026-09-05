@@ -35,9 +35,16 @@ cookie — is trusted from that moment, and `admitDevice()` immediately rewraps
 the escrow copy of every space the device is missing for it. "Missing" is judged
 space by space, never by whether the device holds anything at all: a device
 another device handed one workspace key to still collects the rest from escrow.
-`GET /money/households` runs the same fill before it answers, so a device that
-signed in before a copy existed gets it on its next list rather than its next
-sign-in.
+`GET /money/households` and `GET /spaces` run the same fill before they answer,
+so a device that signed in before a copy existed gets it on its next list rather
+than its next sign-in.
+
+When no copy can be delivered at all — the account's escrow copy is stale and no
+device that holds the key has come back to re-seal it — the clients no longer
+wait. An owner is given a fresh household or space, the same as a first sign-in;
+the old one stays listed and comes back the moment a holder re-seals its copy. A
+Money member who is not the owner does wait, because the owner still holds the
+key and hands it over from Family.
 
 A `space_keys` escrow row records the escrow public key it was sealed to
 (`escrow_public_key`). A row sealed to a key the account no longer has — the

@@ -68,7 +68,7 @@ Decrypted, each change-set is a record list the client merges:
 
 ## Sync loop
 
-1. On start: `GET /spaces` → per space, unwrap `wrappedKey` with the device private key. A `null` wrappedKey means this device is not yet approved.
+1. On start: `GET /spaces` → per space, unwrap `wrappedKey` with the device private key. A `null` wrappedKey means no copy could be delivered: the account's escrow copy is stale and no device holding the key has re-sealed it. An owner mints a fresh space rather than waiting; the old one is picked up again once a holder re-seals it.
 2. `GET /spaces/:id/updates?since=<last seq>` every 1–2 s while the space is open, sending `If-None-Match` with the previous `ETag`. Back off when the app is idle or backgrounded.
 3. On `resync: true`: load `snapshot` (inline `ciphertext`, or fetch `blobUrl`), decrypt, replace local state, then poll from `nextSince`.
 4. Local edits: encrypt, debounce ~2 s, then batch up to 100 change-sets per `POST /updates`. Batching also blunts timing analysis — do not push per keystroke.

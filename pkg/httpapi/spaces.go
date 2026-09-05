@@ -80,9 +80,16 @@ func (s *Server) handleCreateSpace(w http.ResponseWriter, r *http.Request) {
 
 // handleListSpaces returns the caller's spaces with the space key wrapped for the
 // calling device, so that device can start decrypting straight away. A null
-// wrappedKey means this device has not been given the key yet.
+// wrappedKey means the account holds no escrow copy the server can open, and no
+// other device has passed the key on.
+//
+// Before listing, any space the device is missing is filled from the account's
+// escrow copy — see fillMissingKeys. The notes client reads this list on every
+// start, so a copy re-sealed by another device reaches this one here rather than
+// on its next sign-in.
 func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 	c := callerFrom(r.Context())
+	s.fillMissingKeys(r.Context(), c)
 
 	spaces, err := s.store.ListSpaces(r.Context(), c.UserID, c.DeviceID)
 	if err != nil {
