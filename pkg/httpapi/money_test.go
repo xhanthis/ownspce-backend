@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ownspce/backend/pkg/seal"
 	"github.com/ownspce/backend/pkg/store"
@@ -29,6 +31,31 @@ func TestRoutesBuildWithoutConflict(t *testing.T) {
 	}()
 	if (&Server{}).routes() == nil {
 		t.Fatal("routes() returned nil")
+	}
+}
+
+// TestLedgerClearIsMountedForEditors pins the one-request clear onto the tree.
+// The client stopped issuing a DELETE per row when this landed, so a route that
+// silently went missing would leave the sheet reporting success while the
+// household kept every entry it had.
+func TestLedgerClearIsMountedForEditors(t *testing.T) {
+	router, ok := (&Server{}).routes().(chi.Routes)
+	if !ok {
+		t.Fatal("routes() no longer returns a chi router, so the tree cannot be walked")
+	}
+
+	found := false
+	err := chi.Walk(router, func(method string, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		if method == http.MethodDelete && strings.HasSuffix(route, "/money/households/{spaceID}/ledger") {
+			found = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking the routes: %v", err)
+	}
+	if !found {
+		t.Fatal("DELETE /money/households/{spaceID}/ledger is not mounted")
 	}
 }
 

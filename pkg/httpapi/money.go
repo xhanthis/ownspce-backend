@@ -88,6 +88,7 @@ func (s *Server) moneyRoutes(r chi.Router) {
 				r.Delete("/entries/{clientID}", s.handleDeleteEntry)
 				r.Post("/objects", s.handlePutObjects)
 				r.Delete("/objects/{kind}/{clientID}", s.handleDeleteObject)
+				r.Delete("/ledger", s.handleClearLedger)
 			})
 
 			r.Group(func(r chi.Router) {
@@ -621,6 +622,26 @@ func (s *Server) handleDeleteObject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleClearLedger empties a household's ledger in one request.
+//
+// The alternative the client had was a DELETE per row, so clearing a year of a
+// family's spending was several hundred requests, a progress bar, and a window
+// in which closing the tab left half a ledger. The counts come back so the
+// screen can say what went without reading the ledger first.
+func (s *Server) handleClearLedger(w http.ResponseWriter, r *http.Request) {
+	entries, objects, err := s.store.ClearMoneyLedger(r.Context(), spaceIDFrom(r))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, clearLedgerResponse{Entries: entries, Objects: objects})
+}
+
+type clearLedgerResponse struct {
+	Entries int64 `json:"entries"`
+	Objects int64 `json:"objects"`
 }
 
 // handleKeyGaps lists everyone in the household holding no wrapped space key at

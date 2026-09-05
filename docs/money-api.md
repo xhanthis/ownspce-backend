@@ -172,6 +172,16 @@ Batch upsert keyed on `(kind, clientId)`. Up to 200 records.
 
 Tombstones the record. Idempotent.
 
+### DELETE /money/households/{spaceID}/ledger
+
+Empties the household in one request: every entry, plus its budgets, bills and holdings, tombstoned in a single transaction. Categories and accounts stay, because clearing is "start the ledger again" rather than "close the household", and a household with no categories has nowhere to put the next entry.
+
+Editor or above, and the counts come back so the client can say what went without reading the ledger first.
+
+→ `200 { "entries": 847, "objects": 35 }`
+
+An already-empty household is `200 { "entries": 0, "objects": 0 }`, not an error — the same reason a repeated single delete is `204`.
+
 ## Collaboration
 
 **Inviting is two calls, and the second one is the one that matters.** The server never holds a household key, so it cannot seal one for a new member; the owner has to, while they still have the plaintext. So: create the invite, wrap the key to the escrow identity it comes back with, file it. From then on the invitee is simply a member, and signing in on any device collects the key the way any returning device does.
