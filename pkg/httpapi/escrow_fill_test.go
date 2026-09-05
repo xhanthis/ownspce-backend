@@ -283,3 +283,103 @@ func TestListingSpacesFillsTheOneThisDeviceIsMissing(t *testing.T) {
 	}
 	mustOpen(t, wrapped, browserPublic, browserPrivate, spaceKey)
 }
+
+// escrowCurrentFor lists spaces as the actor and returns the escrowCurrent flag
+// the server reported for the named space.
+func (h *harness) escrowCurrentFor(a *actor, spaceID string) bool {
+	h.t.Helper()
+	list := h.do(http.MethodGet, "/v1/spaces", a, nil)
+	requireStatus(h.t, list, http.StatusOK)
+	for _, raw := range decodeBody(h.t, list)["spaces"].([]any) {
+		space := raw.(map[string]any)
+		if space["id"] == spaceID {
+			current, _ := space["escrowCurrent"].(bool)
+			return current
+		}
+	}
+	h.t.Fatalf("space %s is not in the list", spaceID)
+	return false
+}
+
+// TestAStaleEscrowCopyOfASpaceIsReportedRefiledAndThenDelivered is the notes-app
+// twin of the household repair loop, and the production case behind "it started
+// a new account when I logged in": a space sealed to the recovery key an account
+// carried before the server minted its own. The copy on file opens under
+// nothing, so a fresh browser is let in and handed no key. The list has to say
+// so to a device that holds the key, that device's re-seal has to replace the
+// dead row, and the fresh browser has to get in on its next list — with no
+// approval step anywhere.
+func TestAStaleEscrowCopyOfASpaceIsReportedRefiledAndThenDelivered(t *testing.T) {
+	// Arrange — an account whose recovery key its own client set, and a space
+	// sealed to that key.
+	h := newHarness(t)
+	owner := h.signUp("the laptop that still holds the key")
+	clientRecoveryPublic, _ := deviceKeypair(t)
+	if _, err := h.store.Pool().Exec(context.Background(), "UPDATE users SET recovery_public_key = $2 WHERE id = $1", owner.UserID, clientRecoveryPublic[:]); err != nil {
+		t.Fatalf("set client recovery key: %v", err)
+	}
+	spaceKey := randomSpaceKey(t)
+	spaceID := h.createSpaceSealedTo(owner, spaceKey, clientRecoveryPublic)
+
+	// The server mints the account's escrow key over the client's.
+	escrowPublic := h.escrowPublicKey(t, owner.UserID)
+	if bytes.Equal(escrowPublic[:], clientRecoveryPublic[:]) {
+		t.Fatal("the server did not mint a new escrow key over the client's")
+	}
+
+	// Assert — the holder is told the copy is not current, and a fresh browser
+	// signing in is let in but handed nothing for this space.
+	if h.escrowCurrentFor(owner, spaceID) {
+		t.Fatal("a copy sealed to the retired key was reported as current")
+	}
+	user, err := h.store.GetUser(context.Background(), owner.UserID)
+	if err != nil {
+		t.Fatalf("load user: %v", err)
+	}
+	browserPublic, browserPrivate := deviceKeypair(t)
+	session := h.doFrom(http.MethodPost, "/v1/auth/session", nil, sessionBody(user.Email, h.issueSignInCode(user.Email, &user.ID), browserPublic[:]))
+	requireStatus(t, session, http.StatusOK)
+	browser := &actor{UserID: owner.UserID, Token: decodeBody(t, session)["accessToken"].(string), PublicKey: browserPublic[:]}
+	if wrapped := h.spaceKeyFor(browser, spaceID); wrapped != "" {
+		t.Fatal("the browser was handed a key from a copy the server cannot open")
+	}
+
+	// Act — the laptop re-seals the space key to the new escrow key, the way
+	// the notes client now does on its own the moment it opens the space.
+	refile := h.do(http.MethodPost, "/v1/spaces/"+spaceID+"/escrow", owner, map[string]any{
+		"keyEpoch":   1,
+		"wrappedKey": encodeB64(sealTo(t, spaceKey, escrowPublic)),
+	})
+	requireStatus(t, refile, http.StatusOK)
+	if granted := decodeBody(t, refile)["granted"]; granted != float64(1) {
+		t.Fatalf("granted = %v, want 1: the stale copy was not replaced", granted)
+	}
+
+	// Assert — the copy is current, the browser gets in on its next list with
+	// no approval, and filing the same copy again changes nothing.
+	if !h.escrowCurrentFor(owner, spaceID) {
+		t.Fatal("the re-sealed copy was not reported as current")
+	}
+	wrapped := h.spaceKeyFor(browser, spaceID)
+	if wrapped == "" {
+		t.Fatal("the browser was given no key after the copy was re-filed")
+	}
+	mustOpen(t, wrapped, browserPublic, browserPrivate, spaceKey)
+
+	again := h.do(http.MethodPost, "/v1/spaces/"+spaceID+"/escrow", owner, map[string]any{
+		"keyEpoch":   1,
+		"wrappedKey": encodeB64(sealTo(t, spaceKey, escrowPublic)),
+	})
+	requireStatus(t, again, http.StatusOK)
+	if granted := decodeBody(t, again)["granted"]; granted != float64(0) {
+		t.Fatalf("granted = %v on a repeat filing, want 0", granted)
+	}
+
+	// A wrap sealed against an epoch the space is not on is refused rather than
+	// filed as coverage nobody can use.
+	stale := h.do(http.MethodPost, "/v1/spaces/"+spaceID+"/escrow", owner, map[string]any{
+		"keyEpoch":   2,
+		"wrappedKey": encodeB64(sealTo(t, spaceKey, escrowPublic)),
+	})
+	requireStatus(t, stale, http.StatusConflict)
+}

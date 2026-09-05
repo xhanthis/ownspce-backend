@@ -123,6 +123,7 @@ func (s *Server) routes() http.Handler {
 					r.With(s.requireSpaceRole(store.RoleOwner), s.rateLimit(ratelimit.SpaceWrite, subjectUser)).Post("/members", s.handleAddMember)
 					r.With(s.requireSpaceRole(store.RoleViewer), s.rateLimit(ratelimit.SpaceWrite, subjectUser)).Delete("/members/{userID}", s.handleRemoveMember)
 					r.With(s.requireSpaceRole(store.RoleOwner), s.rateLimit(ratelimit.SpaceWrite, subjectUser)).Post("/keys", s.handleRotateSpaceKey)
+					r.With(s.requireSpaceRole(store.RoleViewer), s.rateLimit(ratelimit.SpaceWrite, subjectUser)).Post("/escrow", s.handleFileEscrow)
 
 					r.With(s.requireSpaceRole(store.RoleEditor), s.rateLimit(ratelimit.SyncPush, subjectDevice)).Post("/updates", s.handlePostUpdates)
 					r.With(s.requireSpaceRole(store.RoleViewer), s.rateLimit(ratelimit.SyncPull, subjectDevice)).Get("/updates", s.handleGetUpdates)
