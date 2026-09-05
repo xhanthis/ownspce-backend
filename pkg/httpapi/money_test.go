@@ -2,12 +2,12 @@ package httpapi
 
 import (
 	"fmt"
-	"math/big"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ownspce/backend/pkg/seal"
 )
 
 // TestRoutesBuildWithoutConflict is the cheapest guard against a startup panic.
@@ -26,147 +26,53 @@ func TestRoutesBuildWithoutConflict(t *testing.T) {
 	}
 }
 
-func TestRoundRatToMinorRoundsHalvesAwayFromZero(t *testing.T) {
-	cases := []struct {
-		name string
-		num  int64
-		den  int64
-		want int64
-	}{
-		{"exact", 61031600, 1, 61031600},
-		{"rounds down below half", 3496, 1, 3496},
-		{"rounds half up", 6993, 2, 3497},
-		{"rounds just under half down", 6992, 2, 3496},
-		{"rounds two thirds up", 7, 3, 2},
-		{"negative half rounds away from zero", -6993, 2, -3497},
-		{"negative below half rounds toward zero", -6991, 2, -3496},
-		{"zero", 0, 5, 0},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := roundRatToMinor(big.NewRat(c.num, c.den))
-			if got != c.want {
-				t.Errorf("roundRatToMinor(%d/%d) = %d, want %d", c.num, c.den, got, c.want)
-			}
-		})
-	}
-}
-
-// TestHoldingValueSurvivesAmountsFloat64Cannot is the reason holdings are valued
-// with big.Rat. A large retirement balance in paise times a six-place unit count
-// lands well past 2^53, where float64 can no longer represent consecutive
-// integers, and a portfolio that disagrees with the sum of its own rows is a
-// support ticket. The expected value here is computed with integers only:
-// 1234567891234 × 999999999 / 10^6, rounded once.
-func TestHoldingValueSurvivesAmountsFloat64Cannot(t *testing.T) {
-	const units = "999999999.999999"
-	const price = int64(99999999)
-
-	scaled := new(big.Int).Mul(big.NewInt(999999999999999), big.NewInt(price))
-	quotient, remainder := new(big.Int).QuoRem(scaled, big.NewInt(1000000), new(big.Int))
-	if new(big.Int).Lsh(remainder, 1).Cmp(big.NewInt(1000000)) >= 0 {
-		quotient.Add(quotient, big.NewInt(1))
-	}
-	want := quotient.Int64()
-
-	parsed, ok := new(big.Rat).SetString(units)
-	if !ok {
-		t.Fatalf("could not parse %q as an exact decimal", units)
-	}
-	got := roundRatToMinor(new(big.Rat).Mul(parsed, new(big.Rat).SetInt64(price)))
-	if got != want {
-		t.Fatalf("exact valuation = %d, want %d", got, want)
-	}
-
-	if want <= 1<<53 {
-		t.Fatalf("the fixture no longer exceeds float64's exact range (%d); pick larger inputs", want)
-	}
-	if viaFloat := int64(999999999.999999 * float64(price)); viaFloat == want {
-		t.Logf("float64 agreed at this magnitude (%d); the exact path is still what ships", viaFloat)
-	}
-}
-
-func TestValidateUnitsRejectsWhatTheColumnCannotHold(t *testing.T) {
-	valid := []string{"1", "2840", "0.000001", "1234567.891234", "999999999999999999"}
-	for _, u := range valid {
-		if err := validateUnits(u); err != nil {
-			t.Errorf("validateUnits(%q) = %v, want nil", u, err)
+// TestParseSealedAcceptsOnlyPaddedBuckets is the whole of the server's content
+// validation. Padding is what stops a stored length from describing a ledger
+// row — a 41-byte entry is a cup of coffee and a 300-byte one is a rent
+// payment with a long note — so a payload that is not a bucket plus AEAD
+// overhead has to be refused rather than quietly stored.
+func TestParseSealedAcceptsOnlyPaddedBuckets(t *testing.T) {
+	for _, bucket := range seal.MoneyBuckets {
+		payload := encodeB64(make([]byte, bucket+seal.AEADOverhead))
+		if _, err := parseSealed(payload, "ciphertext"); err != nil {
+			t.Errorf("bucket %d rejected: %v", bucket, err)
 		}
 	}
 
-	invalid := []string{"", "0", "0.0", "-1", "1.1234567", "1e5", "abc", "1,000", " ", "1234567890123456789"}
-	for _, u := range invalid {
-		if err := validateUnits(u); err == nil {
-			t.Errorf("validateUnits(%q) = nil, want an error", u)
+	for _, size := range []int{1, 255, 256, 297, 1063, 4137, 8192} {
+		if _, err := parseSealed(encodeB64(make([]byte, size)), "ciphertext"); err == nil {
+			t.Errorf("%d bytes accepted, but it is not a bucket plus %d", size, seal.AEADOverhead)
 		}
 	}
-}
 
-func TestParsePeriodRequiresBothBoundsAndRejectsReversedWindows(t *testing.T) {
-	cases := []struct {
-		name    string
-		query   string
-		wantErr bool
-	}{
-		{"both bounds", "?from=2026-08-01&to=2026-08-31", false},
-		{"single day", "?from=2026-08-01&to=2026-08-01", false},
-		{"missing to", "?from=2026-08-01", true},
-		{"missing from", "?to=2026-08-31", true},
-		{"neither", "", true},
-		{"reversed", "?from=2026-08-31&to=2026-08-01", true},
-		{"not a date", "?from=august&to=2026-08-31", true},
-		{"timestamp not accepted", "?from=2026-08-01T00:00:00Z&to=2026-08-31", true},
+	if _, err := parseSealed("", "ciphertext"); err == nil {
+		t.Error("empty ciphertext accepted")
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, "/v1/money/households/x/summary"+c.query, nil)
-			if err != nil {
-				t.Fatalf("build request: %v", err)
-			}
-			_, _, err = parsePeriod(req)
-			if c.wantErr != (err != nil) {
-				t.Errorf("parsePeriod(%q) error = %v, wantErr = %v", c.query, err, c.wantErr)
-			}
-		})
+	if _, err := parseSealed("not base64!!", "ciphertext"); err == nil {
+		t.Error("malformed base64 accepted")
 	}
 }
 
-func TestScopeFilterMapsTheToggleToAPayer(t *testing.T) {
-	caller := uuid.New()
-	cases := []struct {
-		scope   string
-		want    *uuid.UUID
-		wantErr bool
-	}{
-		{"", nil, false},
-		{"household", nil, false},
-		{"mine", &caller, false},
-		{"everyone", nil, true},
-		{"Mine", nil, true},
+// TestParseEntryCursorRoundTripsAPagePosition guards the keyset pagination the
+// ledger feed uses. A cursor that parses loosely is worse than one that fails:
+// it silently returns the wrong page.
+func TestParseEntryCursorRoundTripsAPagePosition(t *testing.T) {
+	id := uuid.New()
+	date, parsedID, err := parseEntryCursor("2026-08-31|" + id.String())
+	if err != nil {
+		t.Fatalf("valid cursor rejected: %v", err)
 	}
-	for _, c := range cases {
-		t.Run("scope="+c.scope, func(t *testing.T) {
-			req, err := http.NewRequest(http.MethodGet, "/v1/money?scope="+c.scope, nil)
-			if err != nil {
-				t.Fatalf("build request: %v", err)
-			}
-			got, err := scopeFilter(req, caller)
-			if c.wantErr {
-				if err == nil {
-					t.Fatalf("scopeFilter(%q) = nil error, want an error", c.scope)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("scopeFilter(%q) = %v", c.scope, err)
-			}
-			if (got == nil) != (c.want == nil) {
-				t.Fatalf("scopeFilter(%q) = %v, want %v", c.scope, got, c.want)
-			}
-			if got != nil && *got != *c.want {
-				t.Errorf("scopeFilter(%q) = %v, want %v", c.scope, *got, *c.want)
-			}
-		})
+	if got := date.Format(dateFormat); got != "2026-08-31" {
+		t.Errorf("date = %q, want 2026-08-31", got)
+	}
+	if parsedID != id {
+		t.Errorf("id = %s, want %s", parsedID, id)
+	}
+
+	for _, bad := range []string{"", "2026-08-31", "|", "2026-08-31|nope", "31-08-2026|" + id.String(), id.String()} {
+		if _, _, err := parseEntryCursor(bad); err == nil {
+			t.Errorf("cursor %q accepted", bad)
+		}
 	}
 }
 
@@ -192,345 +98,213 @@ func TestMintInviteTokenIsUnguessableAndStoredOnlyAsAHash(t *testing.T) {
 
 // --- integration ---
 
-// enableMoney turns a fresh space into a money household and returns its id.
-func (h *harness) enableMoney(a *actor) string {
+func today() string { return time.Now().UTC().Format(dateFormat) }
+
+func daysAgo(n int) string {
+	return time.Now().UTC().AddDate(0, 0, -n).Format(dateFormat)
+}
+
+// sealed stands in for real ciphertext: the right length for the smallest money
+// bucket, and opaque to everything on the server side.
+func sealed(t *testing.T) string {
+	t.Helper()
+	return encodeB64(sealedPayload(t, seal.MoneyBuckets[0]))
+}
+
+// createHousehold makes a household with the space key wrapped for the actor's
+// device, which is the only way one can be made.
+func (h *harness) createHousehold(a *actor) string {
 	h.t.Helper()
-	spaceID := h.createSpace(a)
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/enable", a, nil)
+	body := map[string]any{
+		"spaceId":     uuid.NewString(),
+		"wrappedKeys": []map[string]any{{"deviceId": a.DeviceID.String(), "wrappedKey": wrappedKey(h.t)}},
+		"ciphertext":  sealed(h.t),
+	}
+	rec := h.do(http.MethodPost, "/v1/money/households", a, body)
 	requireStatus(h.t, rec, http.StatusCreated)
-	return spaceID
+	return decodeBody(h.t, rec)["spaceId"].(string)
 }
 
-// firstCategory returns the id of a seeded category of the given kind.
-func (h *harness) firstCategory(a *actor, spaceID, kind string) string {
+// putEntry writes one sealed ledger row and returns its client id.
+func (h *harness) putEntry(a *actor, spaceID, occurredOn string) string {
 	h.t.Helper()
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/categories", a, nil)
+	clientID := uuid.NewString()
+	body := map[string]any{"entries": []map[string]any{{"clientId": clientID, "occurredOn": occurredOn, "ciphertext": sealed(h.t)}}}
+	requireStatus(h.t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", a, body), http.StatusOK)
+	return clientID
+}
+
+func (h *harness) listEntries(a *actor, spaceID, from, to string) []any {
+	h.t.Helper()
+	rec := h.do(http.MethodGet, fmt.Sprintf("/v1/money/households/%s/entries?from=%s&to=%s", spaceID, from, to), a, nil)
 	requireStatus(h.t, rec, http.StatusOK)
-	for _, raw := range decodeBody(h.t, rec)["categories"].([]any) {
-		category := raw.(map[string]any)
-		if category["kind"] == kind {
-			return category["id"].(string)
-		}
-	}
-	h.t.Fatalf("no seeded %s category", kind)
-	return ""
+	return decodeBody(h.t, rec)["entries"].([]any)
 }
 
-func today() string { return time.Now().UTC().Format("2006-01-02") }
-
-func TestEnableMoneySeedsCategoriesAndIsIdempotent(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/categories", a, nil)
-	requireStatus(t, rec, http.StatusOK)
-	categories := decodeBody(t, rec)["categories"].([]any)
-	if len(categories) != 17 {
-		t.Fatalf("seeded %d categories, want 17", len(categories))
-	}
-
-	// Enabling twice must not duplicate the seed or reset settings.
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/enable", a, nil), http.StatusCreated)
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/categories", a, nil)
-	if got := len(decodeBody(t, rec)["categories"].([]any)); got != 17 {
-		t.Errorf("after re-enabling, %d categories, want 17", got)
-	}
-}
-
-func TestCreateTransactionIsIdempotentOnClientID(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-	categoryID := h.firstCategory(a, spaceID, "expense")
-
-	body := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 248000, "occurredOn": today(), "note": "Weekly big shop"}
-
-	first := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, body)
-	requireStatus(t, first, http.StatusCreated)
-	firstID := decodeBody(t, first)["id"]
-
-	// A retried request after a lost response must not charge the household twice.
-	second := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, body)
-	requireStatus(t, second, http.StatusCreated)
-	if decodeBody(t, second)["id"] != firstID {
-		t.Fatalf("retry created a second entry: %v then %v", firstID, decodeBody(t, second)["id"])
-	}
-
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today(), a, nil)
-	requireStatus(t, rec, http.StatusOK)
-	if got := len(decodeBody(t, rec)["transactions"].([]any)); got != 1 {
-		t.Errorf("ledger holds %d entries after a retry, want 1", got)
-	}
-}
-
-func TestTransactionAmountBoundsAreEnforced(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-	categoryID := h.firstCategory(a, spaceID, "expense")
-
-	for _, amount := range []int64{0, -1, 100000000001} {
-		body := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": amount, "occurredOn": today()}
-		rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, body)
-		requireStatus(t, rec, http.StatusBadRequest)
-		if code := errorCode(t, rec); code != "invalid_request" {
-			t.Errorf("amount %d gave code %q, want invalid_request", amount, code)
-		}
-	}
-}
-
-func TestSummaryAddsUpAndRespectsTheScopeToggle(t *testing.T) {
-	h := newHarness(t)
-	owner := h.signUp("owner")
-	spaceID := h.enableMoney(owner)
-	expense := h.firstCategory(owner, spaceID, "expense")
-	income := h.firstCategory(owner, spaceID, "income")
-
-	amounts := []int64{248000, 64000, 31000}
-	for _, amount := range amounts {
-		body := map[string]any{"clientId": uuid.NewString(), "categoryId": expense, "type": "expense", "amountMinor": amount, "occurredOn": today()}
-		requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", owner, body), http.StatusCreated)
-	}
-	salary := map[string]any{"clientId": uuid.NewString(), "categoryId": income, "type": "income", "amountMinor": 18600000, "occurredOn": today()}
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", owner, salary), http.StatusCreated)
-
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/summary?from="+today()+"&to="+today(), owner, nil)
-	requireStatus(t, rec, http.StatusOK)
-	body := decodeBody(t, rec)
-
-	var wantSpent int64
-	for _, amount := range amounts {
-		wantSpent += amount
-	}
-	if got := int64(body["spent"].(map[string]any)["minor"].(float64)); got != wantSpent {
-		t.Errorf("spent = %d, want %d", got, wantSpent)
-	}
-	if got := int64(body["income"].(map[string]any)["minor"].(float64)); got != 18600000 {
-		t.Errorf("income = %d, want 18600000", got)
-	}
-	if got := int64(body["net"].(map[string]any)["minor"].(float64)); got != 18600000-wantSpent {
-		t.Errorf("net = %d, want %d", got, 18600000-wantSpent)
-	}
-
-	// A second member's spending must leave the first member's "mine" view alone.
-	other := h.signUp("other")
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/summary?from="+today()+"&to="+today()+"&scope=mine", other, nil)
-	requireStatus(t, rec, http.StatusNotFound)
-}
-
-func TestBudgetTracksSpendingAgainstItsCeiling(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-	categoryID := h.firstCategory(a, spaceID, "expense")
-
-	requireStatus(t, h.do(http.MethodPut, "/v1/money/households/"+spaceID+"/budgets", a, map[string]any{"categoryId": categoryID, "limitMinor": 2400000}), http.StatusOK)
-
-	spend := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 900000, "occurredOn": today()}
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, spend), http.StatusCreated)
-
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/budgets?from="+today()+"&to="+today(), a, nil)
-	requireStatus(t, rec, http.StatusOK)
-	budgets := decodeBody(t, rec)["budgets"].([]any)
-	if len(budgets) != 1 {
-		t.Fatalf("got %d budgets, want 1", len(budgets))
-	}
-	budget := budgets[0].(map[string]any)
-	if got := int64(budget["used"].(map[string]any)["minor"].(float64)); got != 900000 {
-		t.Errorf("used = %d, want 900000", got)
-	}
-	if got := int64(budget["remaining"].(map[string]any)["minor"].(float64)); got != 1500000 {
-		t.Errorf("remaining = %d, want 1500000", got)
-	}
-
-	// Re-putting the same category updates the ceiling rather than duplicating it.
-	requireStatus(t, h.do(http.MethodPut, "/v1/money/households/"+spaceID+"/budgets", a, map[string]any{"categoryId": categoryID, "limitMinor": 3000000}), http.StatusOK)
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/budgets?from="+today()+"&to="+today(), a, nil)
-	if got := len(decodeBody(t, rec)["budgets"].([]any)); got != 1 {
-		t.Errorf("got %d budgets after re-put, want 1", got)
-	}
-}
-
-func TestHoldingIsValuedExactly(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-
-	body := map[string]any{"name": "Nifty 50 Index Fund", "badge": "IDX", "assetType": "mutual_fund", "units": "2840", "avgCostMinor": 16840, "lastPriceMinor": 21490, "dayChangeBps": 62, "sipMinor": 2500000}
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/holdings", a, body)
-	requireStatus(t, rec, http.StatusCreated)
-
-	holding := decodeBody(t, rec)
-	wantValue := int64(2840 * 21490)
-	wantCost := int64(2840 * 16840)
-	if got := int64(holding["value"].(map[string]any)["minor"].(float64)); got != wantValue {
-		t.Errorf("value = %d, want %d", got, wantValue)
-	}
-	if got := int64(holding["cost"].(map[string]any)["minor"].(float64)); got != wantCost {
-		t.Errorf("cost = %d, want %d", got, wantCost)
-	}
-	if got := int64(holding["unrealised"].(map[string]any)["minor"].(float64)); got != wantValue-wantCost {
-		t.Errorf("unrealised = %d, want %d", got, wantValue-wantCost)
-	}
-}
-
-func TestNonMemberCannotReachAHousehold(t *testing.T) {
+// TestCreateHouseholdRefusesToMakeOneNobodyCanOpen is the invariant the whole
+// design rests on. A household whose key was never wrapped for a live device is
+// permanently unreadable, and there is no server-side copy to fall back on, so
+// the create has to fail rather than leave one behind.
+func TestCreateHouseholdRefusesToMakeOneNobodyCanOpen(t *testing.T) {
 	h := newHarness(t)
 	owner := h.signUp("owner")
 	stranger := h.signUp("stranger")
-	spaceID := h.enableMoney(owner)
 
-	// A household nobody told them about is indistinguishable from one that does
-	// not exist, so probing ids leaks nothing.
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today(), stranger, nil)
-	requireStatus(t, rec, http.StatusNotFound)
-
-	rec = h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", stranger, map[string]any{"clientId": uuid.NewString(), "categoryId": uuid.NewString(), "type": "expense", "amountMinor": 100, "occurredOn": today()})
-	requireStatus(t, rec, http.StatusNotFound)
-}
-
-func TestCategoryFromAnotherHouseholdIsRejected(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	mine := h.enableMoney(a)
-	theirs := h.enableMoney(a)
-	foreign := h.firstCategory(a, theirs, "expense")
-
-	body := map[string]any{"clientId": uuid.NewString(), "categoryId": foreign, "type": "expense", "amountMinor": 5000, "occurredOn": today()}
-	rec := h.do(http.MethodPost, "/v1/money/households/"+mine+"/transactions", a, body)
-	requireStatus(t, rec, http.StatusForbidden)
-	if code := errorCode(t, rec); code != "cross_household" {
-		t.Errorf("error code = %q, want cross_household", code)
+	body := map[string]any{
+		"spaceId":     uuid.NewString(),
+		"wrappedKeys": []map[string]any{{"deviceId": stranger.DeviceID.String(), "wrappedKey": wrappedKey(t)}},
+		"ciphertext":  sealed(t),
 	}
-}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households", owner, body), http.StatusBadRequest)
 
-func TestPaidByMustBeAHouseholdMember(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	outsider := h.signUp("outsider")
-	spaceID := h.enableMoney(a)
-	categoryID := h.firstCategory(a, spaceID, "expense")
-
-	body := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 5000, "occurredOn": today(), "paidBy": outsider.UserID.String()}
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, body)
-	requireStatus(t, rec, http.StatusBadRequest)
-}
-
-func TestInviteRoundTripAddsAMemberExactlyOnce(t *testing.T) {
-	h := newHarness(t)
-	owner := h.signUp("owner")
-	guest := h.signUp("guest")
-	spaceID := h.enableMoney(owner)
-
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "amma@home.in", "role": "editor"})
-	requireStatus(t, rec, http.StatusCreated)
-	token, ok := decodeBody(t, rec)["token"].(string)
-	if !ok || token == "" {
-		t.Fatal("invite response carried no token")
-	}
-
-	// Same address twice is a conflict, not a second live invite.
-	rec = h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "amma@home.in"})
-	requireStatus(t, rec, http.StatusConflict)
-
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", guest, map[string]any{"token": token}), http.StatusOK)
-
-	// The guest can now read the ledger.
-	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today(), guest, nil), http.StatusOK)
-
-	// A spent token cannot be redeemed again.
-	third := h.signUp("third")
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", third, map[string]any{"token": token}), http.StatusNotFound)
-	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today(), third, nil), http.StatusNotFound)
-}
-
-func TestForgedInviteTokenIsRejected(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-
-	for _, token := range []string{"", "oski_", "oski_" + uuid.NewString(), "not-a-token"} {
-		rec := h.do(http.MethodPost, "/v1/money/invites/accept", a, map[string]any{"token": token})
-		requireStatus(t, rec, http.StatusNotFound)
-	}
-}
-
-func TestViewerCannotWriteAndEditorCannotInvite(t *testing.T) {
-	h := newHarness(t)
-	owner := h.signUp("owner")
-	viewer := h.signUp("viewer")
-	spaceID := h.enableMoney(owner)
-	categoryID := h.firstCategory(owner, spaceID, "expense")
-
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "viewer@home.in", "role": "viewer"})
-	requireStatus(t, rec, http.StatusCreated)
-	token := decodeBody(t, rec)["token"].(string)
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", viewer, map[string]any{"token": token}), http.StatusOK)
-
-	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today(), viewer, nil), http.StatusOK)
-
-	write := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 5000, "occurredOn": today()}
-	rec = h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", viewer, write)
-	requireStatus(t, rec, http.StatusForbidden)
-	if code := errorCode(t, rec); code != "insufficient_role" {
-		t.Errorf("error code = %q, want insufficient_role", code)
-	}
-
-	// Inviting is owner-only, so even a writer cannot widen the household.
-	rec = h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", viewer, map[string]any{"email": "someone@home.in"})
-	requireStatus(t, rec, http.StatusForbidden)
-}
-
-func TestDeletedTransactionLeavesTheLedgerAndTheTotals(t *testing.T) {
-	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-	categoryID := h.firstCategory(a, spaceID, "expense")
-
-	body := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 123400, "occurredOn": today()}
-	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, body)
-	requireStatus(t, rec, http.StatusCreated)
-	id := decodeBody(t, rec)["id"].(string)
-
-	requireStatus(t, h.do(http.MethodDelete, "/v1/money/households/"+spaceID+"/transactions/"+id, a, nil), http.StatusNoContent)
-	// Deleting twice is not an error; the entry is simply gone either way.
-	requireStatus(t, h.do(http.MethodDelete, "/v1/money/households/"+spaceID+"/transactions/"+id, a, nil), http.StatusNoContent)
-
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/summary?from="+today()+"&to="+today(), a, nil)
+	// And nothing was created: the owner still has no households.
+	rec := h.do(http.MethodGet, "/v1/money/households", owner, nil)
 	requireStatus(t, rec, http.StatusOK)
-	if got := int64(decodeBody(t, rec)["spent"].(map[string]any)["minor"].(float64)); got != 0 {
-		t.Errorf("spent = %d after deleting the only entry, want 0", got)
+	if households := decodeBody(t, rec)["households"].([]any); len(households) != 0 {
+		t.Fatalf("a household survived a rolled-back create: %s", rec.Body.String())
 	}
 }
 
+// TestHouseholdIdIsClientMintedAndUniqueOnce pins the reason the client picks
+// the id: the sealed settings document binds it, so it must exist before the
+// household does. Reusing one is refused rather than merged into.
+func TestHouseholdIdIsClientMintedAndUniqueOnce(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := uuid.NewString()
+
+	body := map[string]any{
+		"spaceId":     spaceID,
+		"wrappedKeys": []map[string]any{{"deviceId": owner.DeviceID.String(), "wrappedKey": wrappedKey(t)}},
+		"ciphertext":  sealed(t),
+	}
+	created := h.do(http.MethodPost, "/v1/money/households", owner, body)
+	requireStatus(t, created, http.StatusCreated)
+	if decodeBody(t, created)["spaceId"] != spaceID {
+		t.Fatalf("server did not keep the client's id: %s", created.Body.String())
+	}
+
+	again := h.do(http.MethodPost, "/v1/money/households", owner, body)
+	requireStatus(t, again, http.StatusConflict)
+	if code := errorCode(t, again); code != "space_exists" {
+		t.Errorf("code = %q, want space_exists", code)
+	}
+
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households", owner, map[string]any{
+		"spaceId":     "not-a-uuid",
+		"wrappedKeys": body["wrappedKeys"],
+		"ciphertext":  sealed(t),
+	}), http.StatusBadRequest)
+}
+
+// TestHouseholdListCarriesTheKeyForTheAskingDevice checks the one field that
+// decides whether a device sees a ledger or a waiting screen.
+func TestHouseholdListCarriesTheKeyForTheAskingDevice(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+
+	rec := h.do(http.MethodGet, "/v1/money/households", owner, nil)
+	requireStatus(t, rec, http.StatusOK)
+	households := decodeBody(t, rec)["households"].([]any)
+	if len(households) != 1 {
+		t.Fatalf("households = %d, want 1", len(households))
+	}
+	first := households[0].(map[string]any)
+	if first["spaceId"] != spaceID {
+		t.Errorf("spaceId = %v, want %s", first["spaceId"], spaceID)
+	}
+	if first["wrappedKey"] == nil {
+		t.Error("the creating device got no wrapped key back")
+	}
+	if first["role"] != "owner" {
+		t.Errorf("role = %v, want owner", first["role"])
+	}
+}
+
+// TestEntryWritesAreIdempotentOnClientID is why the client mints the id. A
+// dropped response over a patchy connection must not turn one dinner into two.
+func TestEntryWritesAreIdempotentOnClientID(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+	clientID := uuid.NewString()
+
+	first := map[string]any{"entries": []map[string]any{{"clientId": clientID, "occurredOn": today(), "ciphertext": sealed(t)}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", owner, first), http.StatusOK)
+
+	replacement := sealed(t)
+	second := map[string]any{"entries": []map[string]any{{"clientId": clientID, "occurredOn": today(), "ciphertext": replacement}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", owner, second), http.StatusOK)
+
+	entries := h.listEntries(owner, spaceID, today(), today())
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1 — the retry logged a second row", len(entries))
+	}
+	if got := entries[0].(map[string]any)["ciphertext"]; got != replacement {
+		t.Error("the second write did not replace the first")
+	}
+}
+
+// TestBatchRejectsARepeatedClientID guards against a batch deadlocking on
+// itself: two upserts of one key inside a single transaction wait on each other
+// forever, which is a hung request rather than an error the client can act on.
+func TestBatchRejectsARepeatedClientID(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+	clientID := uuid.NewString()
+
+	body := map[string]any{"entries": []map[string]any{
+		{"clientId": clientID, "occurredOn": today(), "ciphertext": sealed(t)},
+		{"clientId": clientID, "occurredOn": today(), "ciphertext": sealed(t)},
+	}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", owner, body), http.StatusBadRequest)
+}
+
+// TestUnpaddedCiphertextIsRefused proves padding is enforced at the edge and not
+// merely documented.
+func TestUnpaddedCiphertextIsRefused(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+
+	body := map[string]any{"entries": []map[string]any{{"clientId": uuid.NewString(), "occurredOn": today(), "ciphertext": encodeB64(randomBytes(t, 200))}}}
+	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", owner, body)
+	requireStatus(t, rec, http.StatusRequestEntityTooLarge)
+	if code := errorCode(t, rec); code != "bucket_violation" {
+		t.Errorf("code = %q, want bucket_violation", code)
+	}
+}
+
+// TestLedgerPagesWithoutRepeatingOrSkippingEntries covers keyset pagination
+// across a date boundary, where an offset-based pager would drift as entries
+// arrive mid-scroll.
 func TestLedgerPagesWithoutRepeatingOrSkippingEntries(t *testing.T) {
 	h := newHarness(t)
-	a := h.signUp("owner")
-	spaceID := h.enableMoney(a)
-	categoryID := h.firstCategory(a, spaceID, "expense")
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
 
-	const total = 25
+	const total = 7
 	for i := 0; i < total; i++ {
-		day := time.Now().UTC().AddDate(0, 0, -i).Format("2006-01-02")
-		body := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": int64(1000 + i), "occurredOn": day, "note": fmt.Sprintf("entry %d", i)}
-		requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, body), http.StatusCreated)
+		h.putEntry(owner, spaceID, daysAgo(i%3))
 	}
 
-	from := time.Now().UTC().AddDate(0, 0, -total).Format("2006-01-02")
-	seen := make(map[string]bool)
+	seen := map[string]bool{}
 	cursor := ""
-	for pages := 0; pages < 10; pages++ {
-		path := "/v1/money/households/" + spaceID + "/transactions?limit=7&from=" + from + "&to=" + today()
+	for page := 0; page < 10; page++ {
+		path := fmt.Sprintf("/v1/money/households/%s/entries?from=%s&to=%s&limit=3", spaceID, daysAgo(30), today())
 		if cursor != "" {
 			path += "&cursor=" + cursor
 		}
-		rec := h.do(http.MethodGet, path, a, nil)
+		rec := h.do(http.MethodGet, path, owner, nil)
 		requireStatus(t, rec, http.StatusOK)
 		body := decodeBody(t, rec)
-		for _, raw := range body["transactions"].([]any) {
+
+		for _, raw := range body["entries"].([]any) {
 			id := raw.(map[string]any)["id"].(string)
 			if seen[id] {
-				t.Fatalf("cursor walk returned %s twice", id)
+				t.Fatalf("entry %s appeared on two pages", id)
 			}
 			seen[id] = true
 		}
@@ -540,114 +314,296 @@ func TestLedgerPagesWithoutRepeatingOrSkippingEntries(t *testing.T) {
 		}
 	}
 	if len(seen) != total {
-		t.Errorf("cursor walk saw %d entries, want %d", len(seen), total)
+		t.Fatalf("paged through %d entries, wrote %d", len(seen), total)
 	}
-
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+from+"&to="+today()+"&cursor=not-a-cursor", a, nil)
-	requireStatus(t, rec, http.StatusConflict)
 }
 
-func TestSearchAndScopeNarrowTheFeed(t *testing.T) {
+// TestDeletedEntryLeavesTheFeed checks the tombstone actually hides the row.
+func TestDeletedEntryLeavesTheFeed(t *testing.T) {
 	h := newHarness(t)
 	owner := h.signUp("owner")
-	spaceID := h.enableMoney(owner)
-	categoryID := h.firstCategory(owner, spaceID, "expense")
+	spaceID := h.createHousehold(owner)
+	clientID := h.putEntry(owner, spaceID, today())
 
-	for _, note := range []string{"Weekly big shop", "Auto to office", "Filter coffee"} {
-		body := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 1000, "occurredOn": today(), "note": note}
-		requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", owner, body), http.StatusCreated)
+	requireStatus(t, h.do(http.MethodDelete, "/v1/money/households/"+spaceID+"/entries/"+clientID, owner, nil), http.StatusNoContent)
+	if entries := h.listEntries(owner, spaceID, today(), today()); len(entries) != 0 {
+		t.Fatalf("deleted entry still in the feed: %d rows", len(entries))
 	}
 
-	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today()+"&search=coffee", owner, nil)
-	requireStatus(t, rec, http.StatusOK)
-	if got := len(decodeBody(t, rec)["transactions"].([]any)); got != 1 {
-		t.Errorf("search=coffee matched %d entries, want 1", got)
-	}
-
-	// Search must not become a wildcard when the term contains SQL LIKE syntax.
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today()+"&search=%25", owner, nil)
-	requireStatus(t, rec, http.StatusOK)
-
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today()+"&scope=mine", owner, nil)
-	requireStatus(t, rec, http.StatusOK)
-	if got := len(decodeBody(t, rec)["transactions"].([]any)); got != 3 {
-		t.Errorf("scope=mine matched %d entries, want 3", got)
-	}
-
-	rec = h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/transactions?from="+today()+"&to="+today()+"&scope=everyone", owner, nil)
-	requireStatus(t, rec, http.StatusBadRequest)
+	// Deleting twice is not an error: an offline client replaying its queue
+	// must not be told its own successful delete failed.
+	requireStatus(t, h.do(http.MethodDelete, "/v1/money/households/"+spaceID+"/entries/"+clientID, owner, nil), http.StatusNoContent)
 }
 
-func TestCreateHouseholdGivesAWorkingLedgerInOneCall(t *testing.T) {
+// TestVaultConcurrencyStopsASilentOverwrite covers two members editing
+// household rules at once.
+func TestVaultConcurrencyStopsASilentOverwrite(t *testing.T) {
 	h := newHarness(t)
-	a := h.signUp("owner")
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
 
-	rec := h.do(http.MethodPost, "/v1/money/households", a, nil)
-	requireStatus(t, rec, http.StatusCreated)
+	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/vault", owner, nil)
+	requireStatus(t, rec, http.StatusOK)
 	body := decodeBody(t, rec)
-	spaceID := body["spaceId"].(string)
-	if body["role"] != "owner" {
-		t.Errorf("role = %v, want owner", body["role"])
-	}
+	version := int64(body["version"].(float64))
+	epoch := int(body["keyEpoch"].(float64))
 
-	// Seeded and immediately writable, with no key ceremony in between.
-	categoryID := h.firstCategory(a, spaceID, "expense")
-	entry := map[string]any{"clientId": uuid.NewString(), "categoryId": categoryID, "type": "expense", "amountMinor": 31000, "occurredOn": today()}
-	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/transactions", a, entry), http.StatusCreated)
+	update := map[string]any{"version": version, "keyEpoch": epoch, "ciphertext": sealed(t)}
+	requireStatus(t, h.do(http.MethodPut, "/v1/money/households/"+spaceID+"/vault", owner, update), http.StatusOK)
 
-	rec = h.do(http.MethodGet, "/v1/money/households", a, nil)
-	requireStatus(t, rec, http.StatusOK)
-	households := decodeBody(t, rec)["households"].([]any)
-	if len(households) != 1 {
-		t.Fatalf("listed %d households, want 1", len(households))
-	}
-	if got := households[0].(map[string]any)["memberCount"].(float64); got != 1 {
-		t.Errorf("memberCount = %v, want 1", got)
+	// The same version again is a stale write, and is refused.
+	stale := h.do(http.MethodPut, "/v1/money/households/"+spaceID+"/vault", owner, update)
+	requireStatus(t, stale, http.StatusConflict)
+	if code := errorCode(t, stale); code != "version_conflict" {
+		t.Errorf("code = %q, want version_conflict", code)
 	}
 }
 
-// A foreign key only proves a row exists somewhere. These pin that every write
-// taking an id from the client also checks the row belongs to this household —
-// otherwise a member of one household could attach another household's category
-// to their own records and every figure derived from it would cross a tenant
-// boundary.
-func TestWritesRejectAnotherHouseholdsCategory(t *testing.T) {
+// TestObjectsRoundTripPerKind covers the non-ledger records.
+func TestObjectsRoundTripPerKind(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+
+	categoryID := uuid.NewString()
+	body := map[string]any{"objects": []map[string]any{
+		{"kind": "category", "clientId": categoryID, "sortOrder": 0, "ciphertext": sealed(t)},
+		{"kind": "budget", "clientId": uuid.NewString(), "sortOrder": 0, "ciphertext": sealed(t)},
+	}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/objects", owner, body), http.StatusOK)
+
+	rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/objects?kind=category", owner, nil)
+	requireStatus(t, rec, http.StatusOK)
+	objects := decodeBody(t, rec)["objects"].([]any)
+	if len(objects) != 1 || objects[0].(map[string]any)["clientId"] != categoryID {
+		t.Fatalf("kind filter did not narrow the list: %s", rec.Body.String())
+	}
+
+	all := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/objects", owner, nil)
+	requireStatus(t, all, http.StatusOK)
+	if got := len(decodeBody(t, all)["objects"].([]any)); got != 2 {
+		t.Fatalf("unfiltered objects = %d, want 2", got)
+	}
+
+	requireStatus(t, h.do(http.MethodDelete, "/v1/money/households/"+spaceID+"/objects/category/"+categoryID, owner, nil), http.StatusNoContent)
+	after := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/objects?kind=category", owner, nil)
+	requireStatus(t, after, http.StatusOK)
+	if got := len(decodeBody(t, after)["objects"].([]any)); got != 0 {
+		t.Fatalf("deleted category still listed: %d", got)
+	}
+
+	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/objects?kind=nonsense", owner, nil), http.StatusBadRequest)
+}
+
+// TestNonMemberCannotReachAHousehold is the access-control floor: without a
+// membership row, a household must not even be distinguishable from one that
+// does not exist.
+func TestNonMemberCannotReachAHousehold(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	stranger := h.signUp("stranger")
+	spaceID := h.createHousehold(owner)
+
+	for _, path := range []string{"/vault", "/entries?from=" + today() + "&to=" + today(), "/objects", "/key-gaps"} {
+		rec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+path, stranger, nil)
+		requireStatus(t, rec, http.StatusNotFound)
+	}
+	body := map[string]any{"entries": []map[string]any{{"clientId": uuid.NewString(), "occurredOn": today(), "ciphertext": sealed(t)}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", stranger, body), http.StatusNotFound)
+}
+
+// TestInviteMakesAMemberWhoStillHoldsNoKey is the shape of collaboration under
+// end-to-end encryption, and the part most likely to be got wrong. Redeeming an
+// invite is permission to be handed the ledger; it is not the ledger. Until an
+// owner wraps the space key for the new member's device, they can read the rows
+// and open none of them.
+func TestInviteMakesAMemberWhoStillHoldsNoKey(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	guest := h.signUp("guest")
+	spaceID := h.createHousehold(owner)
+	h.putEntry(owner, spaceID, today())
+
+	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "amma@home.in", "role": "editor"})
+	requireStatus(t, rec, http.StatusCreated)
+	token := decodeBody(t, rec)["token"].(string)
+
+	// The same address twice is a conflict, not a second live invite.
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": "amma@home.in"}), http.StatusConflict)
+
+	accepted := h.do(http.MethodPost, "/v1/money/invites/accept", guest, map[string]any{"token": token})
+	requireStatus(t, accepted, http.StatusOK)
+	if decodeBody(t, accepted)["awaitingKey"] != true {
+		t.Error("accepting an invite did not say the ledger is still locked")
+	}
+
+	// A member, but keyless: the household lists with a null wrappedKey.
+	list := h.do(http.MethodGet, "/v1/money/households", guest, nil)
+	requireStatus(t, list, http.StatusOK)
+	households := decodeBody(t, list)["households"].([]any)
+	if len(households) != 1 {
+		t.Fatalf("guest sees %d households, want 1", len(households))
+	}
+	if households[0].(map[string]any)["wrappedKey"] != nil {
+		t.Fatal("a freshly invited member was handed a space key")
+	}
+
+	// The owner sees exactly that gap, wraps, and files it.
+	gapsRec := h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/key-gaps", owner, nil)
+	requireStatus(t, gapsRec, http.StatusOK)
+	var guestGap map[string]any
+	for _, raw := range decodeBody(t, gapsRec)["gaps"].([]any) {
+		gap := raw.(map[string]any)
+		if gap["userId"] == guest.UserID.String() && gap["deviceId"] != nil {
+			guestGap = gap
+		}
+	}
+	if guestGap == nil {
+		t.Fatal("the new member's device was not reported as a key gap")
+	}
+
+	grant := map[string]any{"keyEpoch": 1, "wrappedKeys": []map[string]any{{"userId": guest.UserID.String(), "deviceId": guestGap["deviceId"], "wrappedKey": wrappedKey(t)}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/keys", owner, grant), http.StatusOK)
+
+	after := h.do(http.MethodGet, "/v1/money/households", guest, nil)
+	requireStatus(t, after, http.StatusOK)
+	if decodeBody(t, after)["households"].([]any)[0].(map[string]any)["wrappedKey"] == nil {
+		t.Fatal("the granted key did not reach the member's device")
+	}
+
+	// A spent token cannot be redeemed again.
+	third := h.signUp("third")
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", third, map[string]any{"token": token}), http.StatusNotFound)
+}
+
+func TestForgedInviteTokenIsRejected(t *testing.T) {
 	h := newHarness(t)
 	a := h.signUp("owner")
-	mine := h.enableMoney(a)
-	theirs := h.enableMoney(a)
-	foreign := h.firstCategory(a, theirs, "expense")
 
-	t.Run("bill", func(t *testing.T) {
-		body := map[string]any{"name": "Rent", "emoji": "🏠", "amountMinor": 5_200_000, "dayOfMonth": 3, "categoryId": foreign}
-		rec := h.do(http.MethodPost, "/v1/money/households/"+mine+"/bills", a, body)
-		requireStatus(t, rec, http.StatusForbidden)
-	})
+	for _, token := range []string{"", "oski_", "oski_" + uuid.NewString(), "not-a-token"} {
+		requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", a, map[string]any{"token": token}), http.StatusNotFound)
+	}
+}
 
-	t.Run("budget", func(t *testing.T) {
-		rec := h.do(http.MethodPut, "/v1/money/households/"+mine+"/budgets", a, map[string]any{"categoryId": foreign, "limitMinor": 100000})
-		requireStatus(t, rec, http.StatusForbidden)
-	})
+// TestKeysCannotBeGrantedToSomeoneElsesDevice stops the grant path from being a
+// way to file a wrap against a device its owner never registered.
+func TestKeysCannotBeGrantedToSomeoneElsesDevice(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	stranger := h.signUp("stranger")
+	spaceID := h.createHousehold(owner)
 
-	t.Run("transaction update", func(t *testing.T) {
-		local := h.firstCategory(a, mine, "expense")
-		create := map[string]any{"clientId": uuid.NewString(), "categoryId": local, "type": "expense", "amountMinor": 5000, "occurredOn": today()}
-		rec := h.do(http.MethodPost, "/v1/money/households/"+mine+"/transactions", a, create)
+	grant := map[string]any{"keyEpoch": 1, "wrappedKeys": []map[string]any{{"userId": stranger.UserID.String(), "deviceId": stranger.DeviceID.String(), "wrappedKey": wrappedKey(t)}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/keys", owner, grant), http.StatusBadRequest)
+
+	stale := map[string]any{"keyEpoch": 9, "wrappedKeys": []map[string]any{{"userId": owner.UserID.String(), "deviceId": owner.DeviceID.String(), "wrappedKey": wrappedKey(t)}}}
+	rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/keys", owner, stale)
+	requireStatus(t, rec, http.StatusConflict)
+	if code := errorCode(t, rec); code != "stale_epoch" {
+		t.Errorf("code = %q, want stale_epoch", code)
+	}
+}
+
+// TestViewerCannotWriteAndEditorCannotGrantKeys pins the role boundaries that
+// matter: a viewer changes nothing, and handing the ledger to a new device stays
+// with the owner.
+func TestViewerCannotWriteAndEditorCannotGrantKeys(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	viewer := h.signUp("viewer")
+	editor := h.signUp("editor")
+	spaceID := h.createHousehold(owner)
+
+	for _, join := range []struct {
+		a    *actor
+		role string
+	}{{viewer, "viewer"}, {editor, "editor"}} {
+		rec := h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", owner, map[string]any{"email": uuid.NewString() + "@home.in", "role": join.role})
 		requireStatus(t, rec, http.StatusCreated)
-		id := decodeBody(t, rec)["id"].(string)
+		token := decodeBody(t, rec)["token"].(string)
+		requireStatus(t, h.do(http.MethodPost, "/v1/money/invites/accept", join.a, map[string]any{"token": token}), http.StatusOK)
+	}
 
-		rec = h.do(http.MethodPatch, "/v1/money/households/"+mine+"/transactions/"+id, a, map[string]any{"categoryId": foreign})
-		requireStatus(t, rec, http.StatusForbidden)
-	})
+	write := map[string]any{"entries": []map[string]any{{"clientId": uuid.NewString(), "occurredOn": today(), "ciphertext": sealed(t)}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", viewer, write), http.StatusForbidden)
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/entries", editor, write), http.StatusOK)
 
-	t.Run("transaction account", func(t *testing.T) {
-		rec := h.do(http.MethodPost, "/v1/money/households/"+theirs+"/accounts", a, map[string]any{"name": "Their bank", "kind": "bank"})
-		requireStatus(t, rec, http.StatusCreated)
-		foreignAccount := decodeBody(t, rec)["id"].(string)
+	grant := map[string]any{"keyEpoch": 1, "wrappedKeys": []map[string]any{{"userId": editor.UserID.String(), "deviceId": editor.DeviceID.String(), "wrappedKey": wrappedKey(t)}}}
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/keys", editor, grant), http.StatusForbidden)
+	requireStatus(t, h.do(http.MethodPost, "/v1/money/households/"+spaceID+"/invites", editor, map[string]any{"email": "x@home.in"}), http.StatusForbidden)
+}
 
-		local := h.firstCategory(a, mine, "expense")
-		body := map[string]any{"clientId": uuid.NewString(), "categoryId": local, "type": "expense", "amountMinor": 5000, "occurredOn": today(), "accountId": foreignAccount}
-		rec = h.do(http.MethodPost, "/v1/money/households/"+mine+"/transactions", a, body)
-		requireStatus(t, rec, http.StatusForbidden)
-	})
+// TestPendingDeviceIsKeptOutOfTheLedger checks money now sits behind device
+// approval. A second browser lands pending, and pending devices hold no space
+// key — letting one in would show a wall of ciphertext, not a ledger.
+func TestPendingDeviceIsKeptOutOfTheLedger(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+
+	second := h.addDevice(owner.UserID, "second browser")
+	if second.Status != "pending" {
+		t.Fatalf("second device status = %q, want pending", second.Status)
+	}
+	requireStatus(t, h.do(http.MethodGet, "/v1/money/households", second, nil), http.StatusForbidden)
+	requireStatus(t, h.do(http.MethodGet, "/v1/money/households/"+spaceID+"/vault", second, nil), http.StatusForbidden)
+}
+
+// TestEntryRangeBoundsAreValidated keeps a malformed period from being read as
+// "everything".
+func TestEntryRangeBoundsAreValidated(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	spaceID := h.createHousehold(owner)
+	base := "/v1/money/households/" + spaceID + "/entries"
+
+	for _, query := range []string{"", "?from=" + today(), "?to=" + today(), "?from=31-08-2026&to=" + today(), "?from=" + today() + "&to=" + daysAgo(5)} {
+		requireStatus(t, h.do(http.MethodGet, base+query, owner, nil), http.StatusBadRequest)
+	}
+	requireStatus(t, h.do(http.MethodGet, base+"?from="+daysAgo(5)+"&to="+today()+"&limit=0", owner, nil), http.StatusBadRequest)
+	requireStatus(t, h.do(http.MethodGet, base+"?from="+daysAgo(5)+"&to="+today()+"&limit=501", owner, nil), http.StatusBadRequest)
+}
+
+// TestPendingDeviceCannotSelfApproveWithoutRecoveryCoverage closes the hole that
+// would make device approval decorative. Money now sits behind an active device,
+// so a pending device that could activate itself by asserting "recovery" with an
+// empty key list would walk straight past the gate.
+func TestPendingDeviceCannotSelfApproveWithoutRecoveryCoverage(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+	h.createHousehold(owner)
+
+	pending := h.addDevice(owner.UserID, "attacker browser")
+	path := "/v1/devices/" + pending.DeviceID.String() + "/approve"
+
+	// No recovery key on the account at all: recovery cannot be the way in.
+	empty := h.do(http.MethodPost, path, pending, map[string]any{"recovery": true, "wrappedKeys": []any{}})
+	requireStatus(t, empty, http.StatusForbidden)
+	if code := errorCode(t, empty); code != "no_recovery_key" {
+		t.Errorf("code = %q, want no_recovery_key", code)
+	}
+
+	// Still pending, and still locked out of the ledger.
+	requireStatus(t, h.do(http.MethodGet, "/v1/money/households", pending, nil), http.StatusForbidden)
+
+	// With a recovery key on file, a claim that skips a space is refused too.
+	requireStatus(t, h.do(http.MethodPatch, "/v1/me", owner, map[string]any{"recoveryPublicKey": encodeB64(randomBytes(t, seal.PublicKeySize))}), http.StatusOK)
+	h.createSpaceWithRecovery(owner)
+
+	short := h.do(http.MethodPost, path, pending, map[string]any{"recovery": true, "wrappedKeys": []any{}})
+	requireStatus(t, short, http.StatusForbidden)
+	if code := errorCode(t, short); code != "incomplete_recovery" {
+		t.Errorf("code = %q, want incomplete_recovery", code)
+	}
+
+	// And a claim that covers every recovery-wrapped space is admitted, because
+	// the server cannot check a phrase — only that the claim is possible.
+	wraps := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
+	requireStatus(t, wraps, http.StatusOK)
+	covering := make([]map[string]any, 0)
+	for _, raw := range decodeBody(t, wraps)["spaces"].([]any) {
+		space := raw.(map[string]any)
+		covering = append(covering, map[string]any{"spaceId": space["spaceId"], "keyEpoch": space["keyEpoch"], "wrappedKey": wrappedKey(t)})
+	}
+	requireStatus(t, h.do(http.MethodPost, path, pending, map[string]any{"recovery": true, "wrappedKeys": covering}), http.StatusOK)
 }

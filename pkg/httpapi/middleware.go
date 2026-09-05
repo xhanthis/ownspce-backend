@@ -7,7 +7,9 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -20,6 +22,7 @@ type ctxKey int
 const (
 	ctxKeyCaller ctxKey = iota
 	ctxKeyRole
+	ctxKeyDaemon
 )
 
 // caller is the authenticated identity of a request: which user, and critically
@@ -38,6 +41,56 @@ func callerFrom(ctx context.Context) caller {
 func roleFrom(ctx context.Context) string {
 	role, _ := ctx.Value(ctxKeyRole).(string)
 	return role
+}
+
+// daemonCaller is the authenticated identity of a paired local agent. It carries
+// the owning user so daemon routes can scope every query without a second lookup.
+type daemonCaller struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Name      string
+	CreatedAt time.Time
+}
+
+func daemonFrom(ctx context.Context) daemonCaller {
+	d, _ := ctx.Value(ctxKeyDaemon).(daemonCaller)
+	return d
+}
+
+// daemonTokenPattern is checked before any database hit, so a user JWT or a
+// mistyped secret on a daemon route costs nothing but a string match.
+var daemonTokenPattern = regexp.MustCompile(`^ospd_[A-Za-z0-9_-]{43}$`)
+
+// requireDaemon authenticates a paired daemon by its opaque token, re-reading the
+// row on every request so revoking a daemon takes effect immediately rather than
+// at some expiry. It performs no writes: liveness is stamped by register and
+// claim instead, which halves the write volume of a five-second poll.
+func (s *Server) requireDaemon(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := r.Header.Get("Authorization")
+		if !strings.HasPrefix(header, "Bearer ") {
+			writeError(w, errUnauthorized("missing bearer token"))
+			return
+		}
+		raw := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+		if !daemonTokenPattern.MatchString(raw) {
+			writeError(w, errUnauthorized("daemon token is not valid or has been revoked"))
+			return
+		}
+
+		daemon, err := s.store.DaemonByToken(r.Context(), raw)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, errUnauthorized("daemon token is not valid or has been revoked"))
+				return
+			}
+			writeError(w, err)
+			return
+		}
+
+		ctx := context.WithValue(r.Context(), ctxKeyDaemon, daemonCaller{ID: daemon.ID, UserID: daemon.UserID, Name: daemon.Name, CreatedAt: daemon.CreatedAt})
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 // requireAuth verifies the bearer access token and re-checks the device row on
@@ -140,6 +193,8 @@ func subjectUser(r *http.Request) string {
 
 func subjectSpace(r *http.Request) string { return chi.URLParam(r, "spaceID") }
 
+func subjectDaemon(r *http.Request) string { return daemonFrom(r.Context()).ID.String() }
+
 // rateLimit enforces a rule, failing open if the limiter itself errors so a
 // limiter outage cannot take down the API.
 func (s *Server) rateLimit(rule ratelimit.Rule, subject subjectFunc) func(http.Handler) http.Handler {
@@ -169,7 +224,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match")
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, If-None-Match, X-Device-ID")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Max-Age", "600")
 		}

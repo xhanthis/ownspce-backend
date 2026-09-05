@@ -1,205 +1,251 @@
 # Ownspce Money API
 
-Base URL `https://api.ownspce.com/v1`. This document covers the money surface only; `docs/api.md` is the reference for everything else.
+Base URL `https://api.ownspce.com/v1`. This document covers the money surface only; `docs/api.md` is the reference for everything else and `docs/client-crypto.md` is the normative contract for the encryption these routes assume.
 
-## What is different about this surface
+## What this surface moves
 
-Every other data route in this API moves ciphertext. **These routes move readable values.** Budgets, category splits, household settle-up and portfolio valuation are arithmetic performed over the amounts themselves, and a server that cannot read a number cannot add two of them together.
+Ciphertext, like every other data route in this API. An earlier draft of Kosh stored amounts, categories and notes in the clear so the server could compute budgets and settle-up. That trade is withdrawn: an operator with database access could read a family's ledger, and the arithmetic it bought turned out to belong on the device, where `money-core` already lived.
 
-The consequence, stated rather than buried: an operator with database access can read a household's ledger. What still holds is access control — every statement is scoped by space membership, and no money row is reachable without a role on its space.
+So a household is a space, its records are sealed under the space key, and the server holds four things per row it can actually read:
 
-Two design points follow from this:
+| Field | Why the server needs it |
+|---|---|
+| `spaceId` | Authorisation. Every query is scoped by space membership. |
+| `clientId` | Idempotent upserts. The client mints it before the request leaves the device. |
+| `occurredOn` (entries only) | A ledger is read by period. Without a date the server would have to ship every row a household ever wrote on every load. |
+| `keyEpoch` | Which generation of the space key opens the blob. |
 
-- Money routes sit behind `requireAuth` but **not** `requireActiveDevice`. Device approval exists to gate the delivery of wrapped space keys; a money row needs no key to read, so requiring an approved device would lock a returning user out of their own ledger the first time they open the web app while buying no confidentiality the database does not already lack.
-- The money surface hangs off `/money` rather than extending `/spaces/{spaceID}`, because chi mounts a subrouter over an entire subtree and a second mount on that node panics at boot.
+Everything else — amount, type, category, note, who paid, whether it is shared, every budget, bill and holding, and the household's own name and currency — is inside the ciphertext.
 
-## Money and amounts
+Two consequences show up in the route table:
 
-Every amount on the wire is an object, never a decimal:
+- Money routes sit behind **both** `requireAuth` and `requireActiveDevice`. A device with no wrapped space key cannot open a single row, so letting it through would buy a screen full of ciphertext rather than a ledger.
+- There is **no summary endpoint**, no computed budget usage and no search parameter. Those were sums and substring matches over plaintext. Clients compute them after decrypting; `@ownspce/money-core` is the reference implementation.
 
-```json
-{ "minor": 248000, "currency": "INR" }
+The money surface hangs off `/money` rather than extending `/spaces/{spaceID}`, because chi mounts a subrouter over an entire subtree and a second mount on that node panics at boot.
+
+## Sealed payloads
+
+Every `ciphertext` field is base64 of:
+
+```
+nonce(24) || XChaCha20-Poly1305(padded_plaintext) || tag(16)
 ```
 
-`minor` is an integer count of the currency's smallest unit — paise for INR, so `248000` is ₹2,480.00. No float ever crosses the boundary in either direction, so no client can reintroduce a rounding error the server was careful to avoid. Request bodies take the same values as bare integers named `amountMinor`, `limitMinor`, `sipMinor` and so on.
+with `AAD = space_id_bytes || uint32_be(key_epoch)`, exactly as `docs/client-crypto.md` specifies for Tier 2. The binding is what stops a row being lifted from one household into another, or replayed under an old key after a rotation.
 
-A single entry is capped at `100000000000` minor units (₹1,000,000,000), matching the digit limit the entry keypad enforces.
+**Padding is mandatory and enforced.** Money uses its own bucket ladder, shorter than the Tier 2 one because a ledger row is a handful of numbers rather than a note body:
 
-Dates are calendar dates (`2026-08-31`), never timestamps. An entry belongs to the day the household says it happened and must not slide because a member opened the app from another timezone.
+```
+buckets     = [256, 1024, 4096]
+padded_len  = smallest bucket >= len(plaintext) + 1     # ISO 7816-4 marker byte
+wire_length = padded_len + 40                           # 24B nonce + 16B tag
+```
+
+Anything else is rejected with `413 bucket_violation`. A ciphertext length that tracked content length would say plenty on its own: forty bytes is a cup of coffee, three hundred is rent with a note explaining the increase.
 
 ## Households
 
-A money household **is** a space. Membership, roles (`owner` / `editor` / `viewer`) and removal are already solved there, and a family that shares notes and a ledger should be one thing to leave, not two. A space becomes a household the first time money is enabled on it.
+A money household **is** a space. Membership, roles (`owner` / `editor` / `viewer`) and removal are already solved there, and a family that shares notes and a ledger should be one thing to leave, not two.
 
-Read needs `viewer`, write needs `editor`, and settings and invites need `owner`.
+Read needs `viewer`, write needs `editor`, and settings, invites and key grants need `owner`.
 
 ### GET /money/households
-Every money-enabled household the caller belongs to.
+
+Every household the caller belongs to, with the space key wrapped for the **calling device**.
 
 ```json
-{ "households": [ { "spaceId": "…", "role": "owner", "memberCount": 3, "currency": "INR",
-                    "locale": "en-IN", "sharedByDefault": true,
-                    "approvalThreshold": { "minor": 2000000, "currency": "INR" },
-                    "monthlyCloseDay": 1 } ] }
+{ "households": [ { "spaceId": "…", "role": "owner", "keyEpoch": 1,
+                    "memberCount": 3, "vaultVersion": 4, "wrappedKey": "…" } ] }
 ```
+
+A `wrappedKey` of `null` means this device has not been given the key for that household yet. It is a waiting state, not an error, and clients should render it as one — an empty ledger in its place reads as lost data.
 
 ### POST /money/households
-Starts a brand-new household in one call: a space, the caller as owner, money enabled, and the seventeen seed categories. → `201` with the same shape as a list row.
 
-It exists so a first-time web session reaches a working ledger without going through space creation's key-wrapping ceremony, which protects content this space will never hold. A notes client listing this space sees `wrappedKey: null` — the state it already handles for a space whose key has not been granted yet.
+Creates a household in one call: the space, the owner's membership, the space key wrapped for the owner's devices, and the sealed settings document.
+
+```json
+{ "spaceId": "<client-minted uuid>",
+  "wrappedKeys": [ { "deviceId": "…", "wrappedKey": "…" },
+                   { "deviceId": null, "wrappedKey": "…" } ],
+  "ciphertext": "…" }
+```
+
+The id is **minted by the client**, not the server. The settings document binds it into its AAD, so it has to exist before the document does. A duplicate is `409 space_exists`.
+
+A `deviceId` of `null` wraps to the account recovery key. Include it whenever the account has one: a household created without it can only ever be reopened from a device that already holds the key, and by the time that matters, every such device is gone.
+
+If no wrapped key matches an active device of the caller, the whole thing rolls back with `400` rather than leaving behind a household nobody can open.
+
+→ `201 { "spaceId", "role": "owner", "keyEpoch": 1, "memberCount": 1, "vaultVersion": 1 }`
 
 ### POST /money/households/{spaceID}/enable
-Owner only. Turns an existing space into a household and seeds the seventeen default categories in the same transaction, so the first entry can be logged without setting anything up. Enabling twice returns the existing settings unchanged — it never resets them or duplicates the seed. → `201`.
 
-### GET · PATCH /money/households/{spaceID}/settings
-`PATCH` is owner only and takes any subset of `currency`, `locale`, `sharedByDefault`, `approvalThresholdMinor`, `monthlyCloseDay` (1–28).
-
-## Categories
-
-### GET /money/households/{spaceID}/categories
-Query `includeArchived=true` to include retired ones.
+Adds a ledger to a space that already exists, so a household that already shares notes does not end up with a second membership list to keep in sync. Space owner only.
 
 ```json
-{ "categories": [ { "id": "…", "name": "Groceries", "emoji": "🛒", "color": "#5FAF9F",
-                    "kind": "expense", "sortOrder": 0, "archived": false } ] }
+{ "keyEpoch": 3, "ciphertext": "…" }
 ```
 
-### POST · PATCH /money/households/{spaceID}/categories[/{categoryID}]
-`name` 1–40 chars and unique within the household, compared case-insensitively — `Food` and `food` collide with `409 category_exists`. `kind` ∈ `expense | income`. `color` is a six-digit hex. `PATCH` accepts `archived` to retire a category without breaking the entries that reference it.
+`keyEpoch` must be the space's current epoch. Already enabled, or a stale epoch → `409 already_enabled_or_stale_epoch`.
 
-## Accounts
+## The vault document
 
-### GET · POST · PATCH /money/households/{spaceID}/accounts[/{accountID}]
-`kind` ∈ `bank | cash | card | wallet | loan | investment`. `currency` defaults to the household's.
+One sealed blob per household holding its name, currency, locale and rules. Written under optimistic concurrency, because two members editing household rules at the same moment must not silently overwrite each other.
 
-## Transactions
-
-### GET /money/households/{spaceID}/transactions
-`from` and `to` are **required** inclusive dates. A missing bound would silently scan a household's whole history and return a figure the caller did not ask for, which on a spending total is worse than an error.
-
-| Query | Meaning |
-|---|---|
-| `from`, `to` | required, `yyyy-mm-dd`, inclusive |
-| `scope` | `household` (default) or `mine` — entries this member paid for |
-| `search` | matches the note or the category name, case-insensitively |
-| `limit` | defaults to 100, clamps at 200 |
-| `cursor` | opaque; a malformed value is rejected with `409 invalid_cursor` rather than silently restarting the walk |
+### GET /money/households/{spaceID}/vault
 
 ```json
-{ "transactions": [ { "id": "…", "clientId": "…", "accountId": null, "categoryId": "…",
-                      "type": "expense", "amount": { "minor": 248000, "currency": "INR" },
-                      "occurredOn": "2026-08-31", "note": "Weekly big shop", "isShared": true,
-                      "paidBy": "…", "createdBy": "…", "createdAt": "…", "updatedAt": "…" } ],
-  "nextCursor": "" }
+{ "spaceId": "…", "keyEpoch": 1, "version": 4, "ciphertext": "…", "updatedAt": "…" }
 ```
 
-### POST /money/households/{spaceID}/transactions
+### PUT /money/households/{spaceID}/vault
 
 ```json
-{ "clientId": "<uuid minted by the client>", "categoryId": "…", "type": "expense",
-  "amountMinor": 248000, "occurredOn": "2026-08-31", "note": "Weekly big shop",
-  "isShared": true, "paidBy": "<optional, must be a household member>" }
+{ "version": 4, "keyEpoch": 1, "ciphertext": "…" }
 ```
 
-`clientId` is what makes a retry safe: the client mints it once per entry, and resending returns the transaction the first attempt created rather than charging the household twice. A category or account belonging to another household is refused with `403 cross_household`, and a `paidBy` who is not a member is a `400` — otherwise a member could pin their own spending onto a stranger and have it appear in that household's settle-up column.
+`version` is the one you last read. If it has moved on → `409 version_conflict`: re-read, merge, retry.
 
-### PATCH · DELETE /money/households/{spaceID}/transactions/{transactionID}
-Delete is a soft delete, and deleting twice is not an error. The row is kept so a member who deletes an entry the rest of the household has already reconciled against leaves a trace, and so a replayed create cannot resurrect it under the same client id.
+## The ledger
 
-### GET /money/households/{spaceID}/summary
-Every aggregate the insights screen renders, in one round trip — computed in SQL because a household's history is unbounded and paging it to the client only to add it up there gets slower every month.
+### GET /money/households/{spaceID}/entries
+
+Query: `from`, `to` (both required, `YYYY-MM-DD`), `limit` (1–500, default 200), `cursor`.
 
 ```json
-{ "from": "2026-08-01", "to": "2026-08-31", "currency": "INR",
-  "spent": { "minor": 14320000, "currency": "INR" },
-  "income": { "minor": 28400000, "currency": "INR" },
-  "net": { "minor": 14080000, "currency": "INR" }, "count": 42,
-  "categories": [ { "categoryId": "…", "name": "Groceries", "emoji": "🛒", "color": "#5FAF9F",
-                    "amount": { "minor": 2480000, "currency": "INR" }, "count": 7 } ],
-  "members":    [ { "userId": "…", "name": "Priya",
-                    "spent": { "minor": 6400000, "currency": "INR" },
-                    "sharedSpent": { "minor": 5100000, "currency": "INR" } } ],
-  "days":       [ { "day": "2026-08-01", "amount": { "minor": 320000, "currency": "INR" } } ] }
+{ "entries": [ { "id": "…", "clientId": "…", "occurredOn": "2026-08-30",
+                 "keyEpoch": 1, "ciphertext": "…", "createdBy": "…",
+                 "updatedAt": "…" } ],
+  "nextCursor": "2026-08-29|<uuid>" }
 ```
 
-`members` is always the whole household regardless of `scope`, because settle-up needs every payer. `sharedSpent` is the half of it that counts against the household rather than one person, and is what the settlement column divides.
+Keyset pagination on `(occurred_on DESC, id DESC)`. An offset pager would let rows repeat or vanish between pages while a household is logging entries. Follow `nextCursor` until it is empty; a partial ledger produces a total that is quietly wrong rather than visibly missing.
 
-## Budgets
+### POST /money/households/{spaceID}/entries
 
-### GET /money/households/{spaceID}/budgets?from=&to=
-Returns each ceiling with what has been spent against it over the window.
+Batch upsert, keyed on `clientId`. Up to 200 records, one transaction.
 
 ```json
-{ "budgets": [ { "id": "…", "categoryId": "…", "name": "Groceries", "emoji": "🛒",
-                 "color": "#5FAF9F", "period": "monthly",
-                 "limit":     { "minor": 2400000, "currency": "INR" },
-                 "used":      { "minor": 900000,  "currency": "INR" },
-                 "remaining": { "minor": 1500000, "currency": "INR" } } ] }
+{ "entries": [ { "clientId": "…", "occurredOn": "2026-08-30", "ciphertext": "…" } ] }
 ```
 
-`remaining` goes negative when a budget is overrun; that is the signal the screen colours red, not an error.
+Batched because the two writes that matter are a CSV import and a reconciliation after being offline, and doing either one row per request turns a hundred entries into a hundred round trips. Upsert because a retry after a dropped response must update the row it already created rather than logging the same dinner twice.
 
-### PUT · DELETE /money/households/{spaceID}/budgets[/{budgetID}]
-`PUT` takes `{categoryId, limitMinor}` and is an upsert — one ceiling per category per period, so re-putting updates rather than duplicating.
+A `clientId` repeated inside one batch is `400`: two upserts of one key inside a transaction wait on each other forever, and a hung request is worse than an error.
 
-## Bills
+→ `200 { "entries": [ … ] }` — the stored rows.
 
-### GET · POST · PATCH /money/households/{spaceID}/bills[/{billID}]
-`dayOfMonth` is 1–28 so a recurring charge lands in every month, February included.
+### DELETE /money/households/{spaceID}/entries/{clientID}
 
-## Holdings
+Tombstones the row. Idempotent: deleting twice is `204`, because an offline client replaying its queue must not be told its own successful delete failed.
 
-### GET · POST · PATCH /money/households/{spaceID}/holdings[/{holdingID}]
-`assetType` ∈ `mutual_fund | stocks | gold | retirement | debt | cash | other`. `units` is a **decimal string** with up to six places — fractional mutual-fund units are normal, and carrying them as a string end to end means no float ever rounds a position. `dayChangeBps` is basis points, so `62` is `+0.62%`; a percentage stored as a float would not survive a round trip.
+## Categories, accounts, budgets, bills and holdings
+
+All five live in one table and one pair of routes, because they are small, always needed together, and fetching them separately meant five round trips before the first screen could render a category name.
+
+`kind` is one of `category`, `account`, `budget`, `bill`, `holding`.
+
+### GET /money/households/{spaceID}/objects
+
+Query: `kind` (optional; omit for all).
 
 ```json
-{ "id": "…", "name": "Nifty 50 Index Fund", "badge": "IDX", "assetType": "mutual_fund",
-  "units": "2840.000000",
-  "avgCost":    { "minor": 16840,    "currency": "INR" },
-  "lastPrice":  { "minor": 21490,    "currency": "INR" },
-  "value":      { "minor": 61031600, "currency": "INR" },
-  "cost":       { "minor": 47825600, "currency": "INR" },
-  "unrealised": { "minor": 13206000, "currency": "INR" },
-  "dayChangeBps": 62, "sip": { "minor": 2500000, "currency": "INR" }, "pricedAt": "…" }
+{ "objects": [ { "id": "…", "kind": "category", "clientId": "…", "sortOrder": 0,
+                 "keyEpoch": 1, "ciphertext": "…", "updatedAt": "…" } ] }
 ```
 
-`value` is `units × lastPrice` computed with exact rationals and rounded once, halves away from zero. A large retirement balance times a six-place unit count exceeds the range where float64 represents consecutive integers, and a portfolio that disagrees with the sum of its own rows is a support ticket. Updating `lastPriceMinor` restamps `pricedAt`, so a stale quote is visible rather than silent.
+### POST /money/households/{spaceID}/objects
 
-## Invites
+Batch upsert keyed on `(kind, clientId)`. Up to 200 records.
 
-Household invites exist alongside the encrypted product's own member flow rather than reusing it. That flow requires the inviter to wrap a space key for the invitee's devices, which presumes the invitee already has an account and a device key — a household inviting a parent who has never opened the app has neither, and money rows need no key to read.
+```json
+{ "objects": [ { "kind": "category", "clientId": "…", "sortOrder": 0, "ciphertext": "…" } ] }
+```
 
-### GET · POST · DELETE /money/households/{spaceID}/invites[/{inviteID}]
-Owner only, because the list is a set of email addresses belonging to people not yet in the account.
+`sortOrder` is plaintext so the server can return records in a stable order without opening them. It carries no meaning beyond position.
 
-`POST {email, role}` where `role` ∈ `editor | viewer` → `201` carrying `token`. **The plaintext token is returned once and is never recoverable** — only its SHA-256 is stored, so a dump of `money_invites` yields no working links. One open invite per address per household; a second is `409 invite_exists`.
+### DELETE /money/households/{spaceID}/objects/{kind}/{clientID}
+
+Tombstones the record. Idempotent.
+
+## Collaboration
+
+An invite makes somebody a member. **It does not give them the ledger.** Membership is permission to be handed the key; a member who already holds it has to wrap it for the new member's devices. This is the part most likely to be got wrong, and the part the API is shaped around.
+
+### GET / POST / DELETE /money/households/{spaceID}/invites
+
+Owner only. `POST` takes `{ "email", "role": "editor" | "viewer" }` and returns the plaintext token **once and never again** — only its SHA-256 is stored, so a dump of `money_invites` yields no working links. An address that already has an open invite is `409 invite_exists`. Invites expire after 14 days.
 
 ### POST /money/invites/accept
-`{token}` → `200 {spaceId}`. Mounted outside the household router because the caller is by definition not yet a member, so no space-scoped middleware could authorize them.
 
-The invite's email is deliberately **not** checked against the caller's: the token is the capability, and requiring both would lock out anyone whose Google address differs from the one a family member typed. Expiry (14 days) and single use are what bound it. An unknown, expired, revoked or already-redeemed token all answer `404` identically, so none can be told apart by probing.
+```json
+{ "token": "oski_…" }
+```
 
-## Status codes
+→ `200 { "spaceId": "…", "awaitingKey": true }`
 
-Adds to the shared table in `docs/api.md`:
+Mounted outside the household router because the caller is by definition not yet a member. The token is the capability; the invite's email is not checked against the caller's, because requiring both would lock out anyone whose Google address differs from the one a family member typed. Expiry and single use are what bound it.
+
+Anything unknown, expired, revoked or already redeemed is `404`, so none of them can be told apart by probing.
+
+### GET /money/households/{spaceID}/key-gaps
+
+Owner only. Everyone in the household holding no wrapped key at the current epoch: each member's active devices, and their account recovery key.
+
+```json
+{ "gaps": [ { "userId": "…", "deviceId": "…", "publicKey": "…",
+              "name": "Priya", "username": null, "recovery": false } ] }
+```
+
+A `deviceId` of `null` with `recovery: true` is the member's account recovery key.
+
+This returns public keys and names — the same material `GET /keys/{userID}` already gives any active device — never anything sealed. **Show the fingerprint before wrapping.** A server that substituted a key here would be handed the household key wrapped for itself, and nothing in software can catch that; only a person comparing fingerprints out of band can.
+
+### POST /money/households/{spaceID}/keys
+
+Owner only. Files keys wrapped for members who had none.
+
+```json
+{ "keyEpoch": 1,
+  "wrappedKeys": [ { "userId": "…", "deviceId": "…", "wrappedKey": "…" } ] }
+```
+
+Deliberately not a rotation: rotation takes access away and demands complete coverage of every remaining device, while this hands access out one member at a time as invitations are accepted. `keyEpoch` must be current, so a grant computed against a key that has since rotated is `409 stale_epoch` rather than a wrap nobody can use.
+
+Postgres enforces that every named device really is an active device of the named member, so a caller cannot file a wrap against somebody else's device — that is `400`.
+
+→ `200 { "granted": 1, "keyEpoch": 1 }`
+
+### Members, rotation and removal
+
+Use the space routes: `GET /spaces/{spaceID}/members`, `DELETE /spaces/{spaceID}/members/{userID}`, `POST /spaces/{spaceID}/keys`. Removing a member revokes future fetches but cannot unlearn the key they already had, so rotate afterwards and write fresh records at the new epoch.
+
+## New devices
+
+`GET /devices`, `POST /devices/{deviceID}/approve` and `GET /devices/{deviceID}/pending-keys` are the same routes the notes client uses, and they cover money households too — a household is a space.
+
+A person's **first** device is active automatically; every later one lands `pending` and holds no key. Two ways out:
+
+- **Approval.** An active device reads `pending-keys`, wraps each space key to the new device's public key after the person compares fingerprints, and calls `approve`.
+- **Recovery phrase.** `GET /recovery/spaces` returns the space keys wrapped to the account recovery key. It is the one read a **pending** device may make, because restoring from a phrase is precisely the situation where no device is trusted — and what it returns is useless without the phrase. The device unwraps locally, re-wraps to itself, and calls `approve` on itself with `recovery: true`.
+
+## Errors
+
+Codes specific to this surface:
 
 | Status | Code | Meaning |
 |---|---|---|
-| 403 | `cross_household` | that category or account belongs to another household |
-| 409 | `category_exists` | a category with that name already exists here |
-| 409 | `invite_exists` | that address already has an open invite |
-| 409 | `invalid_cursor` | the paging cursor is unreadable; start the walk again |
+| 400 | `bad_request` | A malformed field; the message names it. |
+| 403 | `device_pending` | Signed in, but this device is not approved. Not an auth failure — do not sign the user out. |
+| 403 | `insufficient_role` | The action needs a higher role in this household. |
+| 404 | `not_found` | No household here, or the caller is not a member. The two are deliberately indistinguishable. |
+| 409 | `space_exists` | That household id is taken; mint a new one. |
+| 409 | `version_conflict` | The vault moved on. Re-read and retry. |
+| 409 | `stale_epoch` | The household key rotated mid-grant. Refetch the gaps. |
+| 413 | `bucket_violation` | The ciphertext is not a padding bucket plus 40 bytes. |
 
-`404 not_found` covers a household that does not exist, has money disabled, or that the caller is not a member of — deliberately indistinguishable, so space ids cannot be probed.
+## What the server can still see
 
-## Rate limits
-
-| Route | Limit | Subject |
-|---|---|---|
-| money reads | 240 / min | user |
-| money writes | 120 / min | user |
-| POST invites | 20 / hour | user |
-
-## Migration
-
-`db/migrations/000008_money.up.sql` adds eight tables — `money_settings`, `money_accounts`, `money_categories`, `money_transactions`, `money_budgets`, `money_bills`, `money_holdings`, `money_invites` — and touches none of the existing ones. Apply with `go run ./cmd/migrate up` against `DATABASE_URL_UNPOOLED`; the deploy does not run migrations.
+Not amounts, categories, notes, budgets, holdings or the household's name. It does see the shape: how many entries a household has, which calendar days they fall on, how many members and devices, and when rows were written. A ledger with one entry a day looks different from one with forty, and no amount of padding hides that.

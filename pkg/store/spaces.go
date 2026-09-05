@@ -325,3 +325,52 @@ func (s *Store) PendingKeySpaces(ctx context.Context, userID, deviceID uuid.UUID
 	}
 	return out, rows.Err()
 }
+
+// RecoveryWrap is one space's key sealed to a member's account recovery key.
+type RecoveryWrap struct {
+	SpaceID    uuid.UUID
+	KeyEpoch   int
+	WrappedKey []byte
+}
+
+// RecoveryCoverage reports how many spaces a user belongs to alongside the
+// recovery wraps that exist for them, which together say whether a device
+// claiming recovery-phrase possession could possibly be telling the truth.
+// Args: ctx, userID
+// Returns: space count, recovery wraps, error
+func (s *Store) RecoveryCoverage(ctx context.Context, userID uuid.UUID) (int, []RecoveryWrap, error) {
+	var spaces int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM space_members m JOIN spaces sp ON sp.id = m.space_id AND sp.deleted_at IS NULL WHERE m.user_id = $1", userID).Scan(&spaces); err != nil {
+		return 0, nil, err
+	}
+	wraps, err := s.ListRecoveryWraps(ctx, userID)
+	return spaces, wraps, err
+}
+
+// ListRecoveryWraps returns every space key wrapped to the user's recovery key
+// at the current epoch.
+//
+// It exists apart from ListSpaces because it is the one read a device with no
+// approval yet must be allowed to make: restoring from a phrase is precisely the
+// situation where no device is trusted. What it hands back is useless without
+// the phrase — sealed boxes only the recovery private key opens — so serving it
+// to a pending device gives away nothing.
+// Args: ctx, userID
+// Returns: one wrap per space that has one, oldest space first
+func (s *Store) ListRecoveryWraps(ctx context.Context, userID uuid.UUID) ([]RecoveryWrap, error) {
+	rows, err := s.pool.Query(ctx, "SELECT s.id, s.key_epoch, k.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL JOIN space_keys k ON k.space_id = s.id AND k.key_epoch = s.key_epoch AND k.user_id = m.user_id AND k.device_id IS NULL WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []RecoveryWrap
+	for rows.Next() {
+		var w RecoveryWrap
+		if err := rows.Scan(&w.SpaceID, &w.KeyEpoch, &w.WrappedKey); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}

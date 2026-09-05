@@ -687,3 +687,58 @@ func TestUnauthenticatedRequestsAreRejected(t *testing.T) {
 		requireStatus(t, rec, http.StatusUnauthorized)
 	}
 }
+
+// TestRecoveryWrapsReachAPendingDevice is the endpoint the recovery phrase
+// depends on. Restoring from a phrase happens precisely when no device is
+// approved, so a pending device has to be able to fetch the recovery-wrapped
+// keys — which are useless to it without the phrase.
+func TestRecoveryWrapsReachAPendingDevice(t *testing.T) {
+	h := newHarness(t)
+	owner := h.signUp("owner")
+
+	requireStatus(t, h.do(http.MethodPatch, "/v1/me", owner, map[string]any{"recoveryPublicKey": encodeB64(randomBytes(t, seal.PublicKeySize))}), http.StatusOK)
+
+	spaceID := h.createSpaceWithRecovery(owner)
+	pending := h.addDevice(owner.UserID, "restored laptop")
+	if pending.Status != "pending" {
+		t.Fatalf("second device status = %q, want pending", pending.Status)
+	}
+
+	// The spaces list stays behind device approval; the recovery read does not.
+	requireStatus(t, h.do(http.MethodGet, "/v1/spaces", pending, nil), http.StatusForbidden)
+
+	rec := h.do(http.MethodGet, "/v1/recovery/spaces", pending, nil)
+	requireStatus(t, rec, http.StatusOK)
+	spaces := decodeBody(t, rec)["spaces"].([]any)
+	if len(spaces) != 1 {
+		t.Fatalf("recovery spaces = %d, want 1", len(spaces))
+	}
+	first := spaces[0].(map[string]any)
+	if first["spaceId"] != spaceID {
+		t.Errorf("spaceId = %v, want %s", first["spaceId"], spaceID)
+	}
+	if first["recoveryWrappedKey"] == "" || first["recoveryWrappedKey"] == nil {
+		t.Error("the recovery wrap was not served")
+	}
+
+	// Somebody else's account is not reachable through it.
+	stranger := h.signUp("stranger")
+	other := h.do(http.MethodGet, "/v1/recovery/spaces", stranger, nil)
+	requireStatus(t, other, http.StatusOK)
+	if got := len(decodeBody(t, other)["spaces"].([]any)); got != 0 {
+		t.Fatalf("a stranger saw %d recovery wraps", got)
+	}
+}
+
+// createSpaceWithRecovery creates a space whose key is wrapped for the actor's
+// device and for their account recovery key.
+func (h *harness) createSpaceWithRecovery(a *actor) string {
+	h.t.Helper()
+	body := map[string]any{"wrappedKeys": []map[string]any{
+		{"deviceId": a.DeviceID.String(), "wrappedKey": wrappedKey(h.t)},
+		{"wrappedKey": wrappedKey(h.t)},
+	}}
+	rec := h.do(http.MethodPost, "/v1/spaces", a, body)
+	requireStatus(h.t, rec, http.StatusCreated)
+	return decodeBody(h.t, rec)["id"].(string)
+}
