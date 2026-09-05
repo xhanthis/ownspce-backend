@@ -260,24 +260,24 @@ func (s *Server) handleAuthContinue(w http.ResponseWriter, r *http.Request) {
 // status that nothing will ever change; the next sign-in on that device clears
 // it.
 //
-// A device that already holds keys is left alone, so an ordinary sign-in costs
-// one count query and never touches the escrow key.
-// Args: ctx, userID, the device just registered
+// Only the spaces the device is missing are re-wrapped, space by space. A device
+// that another device already handed one space to is not "done": it still
+// collects every other space from escrow here. So an ordinary sign-in on a
+// device that holds everything costs one query and never touches the escrow key.
+//
+// Safe to call on every request that should leave the device able to read what
+// it is entitled to, not only at sign-in; the households list does exactly that.
+// Args: ctx, userID, the device just registered or asking
 // Returns: the device as it now stands, which is the caller's to send back
 // Handles: escrow not configured and no escrow wraps — both leave the device
 // active but keyless rather than failing the sign-in, because being signed in
 // with nothing to read still beats not being signed in; and any failure along
 // the way, which is logged and swallowed for the same reason
 func (s *Server) admitDevice(ctx context.Context, userID uuid.UUID, device *store.Device) *store.Device {
-	held, err := s.store.CountDeviceKeys(ctx, device.ID)
-	if err != nil {
-		log.Printf("count device keys for %s: %v", device.ID, err)
-		return device
-	}
-
 	var keys []store.WrappedSpaceKey
-	if held == 0 && s.escrow.Configured() {
-		keys, err = s.rewrapFromEscrow(ctx, userID, device.PublicKey)
+	if s.escrow.Configured() {
+		var err error
+		keys, err = s.rewrapFromEscrow(ctx, userID, device.ID, device.PublicKey)
 		if err != nil {
 			log.Printf("escrow restore for %s: %v", device.ID, err)
 			keys = nil

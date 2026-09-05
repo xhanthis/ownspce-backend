@@ -1,0 +1,13 @@
+-- A recovery wrap now records which escrow public key it was sealed to.
+--
+-- Accounts made before the server minted escrow keys carry a recovery public
+-- key their own client generated, and households were sealed to it. When the
+-- server mints a real escrow key it replaces that public key, and every wrap
+-- sealed to the old one becomes a row that looks like coverage and opens under
+-- nothing the server holds. Recording the recipient lets the gap listing tell a
+-- current wrap from a stale one, so a device that still holds the key re-seals it.
+--
+-- Additive only: nullable, no default, no backfill. Rows written before this
+-- column are treated as "recipient unknown" — still tried at sign-in, and
+-- offered for re-sealing so they heal the first time an owner opens the app.
+ALTER TABLE space_keys ADD COLUMN IF NOT EXISTS escrow_public_key bytea CHECK (escrow_public_key IS NULL OR octet_length(escrow_public_key) = 32);

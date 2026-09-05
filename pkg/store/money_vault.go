@@ -441,10 +441,16 @@ func (s *Store) DeleteMoneyObject(ctx context.Context, spaceID uuid.UUID, kind s
 // client reads this list, wraps, and files the results back through GrantSpaceKeys.
 // A member's own recovery key appears here too, so a household survives the loss
 // of every device the invitee owns.
+//
+// A recovery wrap counts only when it was sealed to the escrow public key the
+// account has now. One sealed to an earlier key — the client-generated one an
+// account carried before the server minted its own — or to a key nobody
+// recorded is listed as a gap, so a device still holding the household key
+// seals it again and a fresh device can be let in from that copy.
 // Args: ctx, spaceID
 // Returns: gaps ordered by member then device, error
 func (s *Store) MoneyKeyGaps(ctx context.Context, spaceID uuid.UUID) ([]MoneyKeyGap, error) {
-	rows, err := s.pool.Query(ctx, "SELECT m.user_id, d.id, d.public_key, u.name, u.username FROM space_members m JOIN spaces sp ON sp.id = m.space_id JOIN users u ON u.id = m.user_id JOIN devices d ON d.user_id = m.user_id AND d.status = 'active' LEFT JOIN space_keys k ON k.space_id = m.space_id AND k.key_epoch = sp.key_epoch AND k.user_id = m.user_id AND k.device_id = d.id WHERE m.space_id = $1 AND k.id IS NULL UNION ALL SELECT m.user_id, NULL, u.recovery_public_key, u.name, u.username FROM space_members m JOIN spaces sp ON sp.id = m.space_id JOIN users u ON u.id = m.user_id LEFT JOIN space_keys k ON k.space_id = m.space_id AND k.key_epoch = sp.key_epoch AND k.user_id = m.user_id AND k.device_id IS NULL WHERE m.space_id = $1 AND u.recovery_public_key IS NOT NULL AND k.id IS NULL ORDER BY 1, 2 NULLS LAST", spaceID)
+	rows, err := s.pool.Query(ctx, "SELECT m.user_id, d.id, d.public_key, u.name, u.username FROM space_members m JOIN spaces sp ON sp.id = m.space_id JOIN users u ON u.id = m.user_id JOIN devices d ON d.user_id = m.user_id AND d.status = 'active' LEFT JOIN space_keys k ON k.space_id = m.space_id AND k.key_epoch = sp.key_epoch AND k.user_id = m.user_id AND k.device_id = d.id WHERE m.space_id = $1 AND k.id IS NULL UNION ALL SELECT m.user_id, NULL, u.recovery_public_key, u.name, u.username FROM space_members m JOIN spaces sp ON sp.id = m.space_id JOIN users u ON u.id = m.user_id LEFT JOIN space_keys k ON k.space_id = m.space_id AND k.key_epoch = sp.key_epoch AND k.user_id = m.user_id AND k.device_id IS NULL AND k.escrow_public_key = u.recovery_public_key WHERE m.space_id = $1 AND u.recovery_public_key IS NOT NULL AND k.id IS NULL ORDER BY 1, 2 NULLS LAST", spaceID)
 	if err != nil {
 		return nil, err
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -178,11 +179,26 @@ func objectJSON(o store.MoneyObject) map[string]any {
 }
 
 // handleListHouseholds returns the caller's households, each with the space key
-// wrapped for the calling device. A null wrappedKey means this device has not
-// been approved for that household yet, which the client shows as a waiting
-// state rather than an empty ledger.
+// wrapped for the calling device. A null wrappedKey means this device holds no
+// key for that household, which the client shows as a waiting state rather than
+// an empty ledger.
+//
+// Before listing, any household the device is missing is filled from the
+// account's escrow copy. Signing in already does this, but a device signed in
+// before a household got its escrow wrap — or before this deployment had an
+// escrow key at all — would otherwise sit on the waiting screen polling this
+// route until its owner thought to sign out and back in. The screen polls;
+// this is what makes the poll end.
 func (s *Server) handleListHouseholds(w http.ResponseWriter, r *http.Request) {
 	c := callerFrom(r.Context())
+	if s.escrow.Configured() {
+		if device, err := s.store.LiveDevice(r.Context(), c.DeviceID); err != nil {
+			log.Printf("load device %s before listing households: %v", c.DeviceID, err)
+		} else {
+			s.admitDevice(r.Context(), c.UserID, device)
+		}
+	}
+
 	households, err := s.store.ListMoneyHouseholds(r.Context(), c.UserID, c.DeviceID)
 	if err != nil {
 		writeError(w, err)

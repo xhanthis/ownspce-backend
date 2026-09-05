@@ -124,15 +124,6 @@ func (s *Store) TouchDevice(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// CountDeviceKeys reports how many space keys are filed for a device, which is
-// how the sign-in path tells an active device that can read something from one
-// that got in but holds nothing.
-func (s *Store) CountDeviceKeys(ctx context.Context, deviceID uuid.UUID) (int, error) {
-	var count int
-	err := s.pool.QueryRow(ctx, "SELECT count(*) FROM space_keys WHERE device_id = $1", deviceID).Scan(&count)
-	return count, err
-}
-
 // WrappedSpaceKey is a space key sealed to one recipient public key. The server
 // stores it and can never unwrap it.
 type WrappedSpaceKey struct {

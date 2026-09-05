@@ -157,7 +157,7 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		escrowKeys, err = s.rewrapFromEscrow(r.Context(), c.UserID, device.PublicKey)
+		escrowKeys, err = s.rewrapFromEscrow(r.Context(), c.UserID, device.ID, device.PublicKey)
 		if err != nil {
 			writeError(w, err)
 			return
@@ -289,20 +289,21 @@ func (s *Server) consumeDeviceEmailCode(ctx context.Context, userID, deviceID uu
 	return nil
 }
 
-// rewrapFromEscrow opens the account's escrow copy of every household key and
-// seals each one to a device that has just proved the account's email address.
+// rewrapFromEscrow opens the account's escrow copy of every space key the
+// device is missing and seals each one to that device.
 //
 // This is the one place in the system where the server touches a key that can
 // open somebody's ledger, and it is the price of the product decision that a
-// person who has lost every device gets their money back. It runs only after a
-// mailed code has been consumed.
-// Args: ctx, userID, the new device's X25519 public key
-// Returns: one wrapped key per household that could be recovered
+// person who has lost every device gets their money back. It runs only for a
+// device that has proved the account: at sign-in, after a mailed code, or while
+// signed in and asking for its households.
+// Args: ctx, userID, the device's id and X25519 public key
+// Returns: one wrapped key per missing space that could be recovered
 // Handles: an escrow wrap sealed to a key this deployment can no longer open
 // (an account that predates escrow), which is skipped rather than failing the
 // whole activation — the device still gets in, and the households it could not
 // be given land on the awaiting-key screen where a member can hand them over
-func (s *Server) rewrapFromEscrow(ctx context.Context, userID uuid.UUID, devicePublicKey []byte) ([]store.WrappedSpaceKey, error) {
+func (s *Server) rewrapFromEscrow(ctx context.Context, userID, deviceID uuid.UUID, devicePublicKey []byte) ([]store.WrappedSpaceKey, error) {
 	if !s.escrow.Configured() {
 		return nil, errUnavailable("email recovery is not configured on this deployment")
 	}
@@ -315,7 +316,7 @@ func (s *Server) rewrapFromEscrow(ctx context.Context, userID uuid.UUID, deviceP
 		return nil, nil
 	}
 
-	wraps, err := s.store.ListEscrowWraps(ctx, userID)
+	wraps, err := s.store.ListEscrowWraps(ctx, userID, deviceID)
 	if err != nil {
 		return nil, err
 	}

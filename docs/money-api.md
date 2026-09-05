@@ -59,6 +59,8 @@ Every household the caller belongs to, with the space key wrapped for the **call
                     "memberCount": 3, "vaultVersion": 4, "wrappedKey": "…" } ] }
 ```
 
+Before answering, the server hands this device the escrow copy of every household it is missing, exactly as sign-in does. A device that signed in before a household had a sealed copy — or before the deployment had an escrow key at all — therefore gets its key on the next list rather than on its next sign-in, which is what lets the waiting screen's poll end.
+
 A `wrappedKey` of `null` means this device has not been given the key for that household yet. It is a waiting state, not an error, and clients should render it as one — an empty ledger in its place reads as lost data.
 
 ### POST /money/households
@@ -233,7 +235,7 @@ This is the repair path now rather than the invite path — a member whose escro
               "name": "Priya", "username": null, "recovery": false } ] }
 ```
 
-A `deviceId` of `null` with `recovery: true` is the member's account recovery key.
+A `deviceId` of `null` with `recovery: true` is the member's account recovery key. It is listed when the account has no sealed copy at this epoch **or when the copy on file was sealed to a different escrow key than the account has now** — an account that carried a client-generated recovery key before the server minted its own has every household sealed to the old one, and those copies open under nothing the server holds. Clients seal recovery gaps immediately, without a fingerprint check: the escrow key is the server's own, and the household key is already sealed to it at creation and at invite time on the same terms.
 
 This returns public keys and names — the same material `GET /keys/{userID}` already gives any active device — never anything sealed. **Show the fingerprint before wrapping.** A server that substituted a key here would be handed the household key wrapped for itself, and nothing in software can catch that; only a person comparing fingerprints out of band can.
 
@@ -249,6 +251,8 @@ Owner only. Files keys wrapped for members who had none.
 Deliberately not a rotation: rotation takes access away and demands complete coverage of every remaining device, while this hands access out one member at a time as invitations are accepted. `keyEpoch` must be current, so a grant computed against a key that has since rotated is `409 stale_epoch` rather than a wrap nobody can use.
 
 Postgres enforces that every named device really is an active device of the named member, so a caller cannot file a wrap against somebody else's device — that is `400`.
+
+A recovery wrap (no `deviceId`) records which escrow public key it was sealed to. Filing one replaces a copy sealed to a different or unrecorded key and counts toward `granted`; filing a copy the account already has changes nothing and counts for nothing.
 
 → `200 { "granted": 1, "keyEpoch": 1 }`
 
