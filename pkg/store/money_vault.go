@@ -432,6 +432,49 @@ func (s *Store) DeleteMoneyObject(ctx context.Context, spaceID uuid.UUID, kind s
 	return nil
 }
 
+// clearableObjectKinds are the record kinds a ledger clear takes with it.
+// Categories and accounts are not in the list: clearing is "start the ledger
+// again", not "close the household", and a household with no categories has
+// nowhere to put the next entry.
+var clearableObjectKinds = []string{"budget", "bill", "holding"}
+
+// ClearMoneyLedger tombstones every entry in a household, along with its
+// budgets, bills and holdings.
+//
+// One statement per table, in one transaction. The client used to do this a row
+// at a time, which on a household with a year of spending meant hundreds of
+// round trips and a clear that a dropped connection could abandon halfway,
+// leaving a ledger that was neither whole nor empty. Now it happens or it does
+// not.
+//
+// Tombstones rather than deletes, for the same reason a single delete is: other
+// members' devices are holding these rows and have to learn they went away.
+// Args: ctx, spaceID
+// Returns: the number of entries and the number of objects tombstoned, error
+// Handles: a household that is already empty, which is not an error and reports
+// zero of each
+func (s *Store) ClearMoneyLedger(ctx context.Context, spaceID uuid.UUID) (int64, int64, error) {
+	var entries, objects int64
+	err := s.tx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "UPDATE money_entries SET deleted_at = now(), updated_at = now() WHERE space_id = $1 AND deleted_at IS NULL", spaceID)
+		if err != nil {
+			return err
+		}
+		entries = tag.RowsAffected()
+
+		tag, err = tx.Exec(ctx, "UPDATE money_objects SET deleted_at = now(), updated_at = now() WHERE space_id = $1 AND kind = ANY($2) AND deleted_at IS NULL", spaceID, clearableObjectKinds)
+		if err != nil {
+			return err
+		}
+		objects = tag.RowsAffected()
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return entries, objects, nil
+}
+
 // MoneyKeyGaps lists every recipient in a household that holds no wrapped space
 // key at the current epoch.
 //

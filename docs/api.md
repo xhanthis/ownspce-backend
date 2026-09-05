@@ -60,7 +60,7 @@ Public. Verifies a Google or Apple ID token — or a code this API mailed — cr
 { "accessToken": "eyJ...", "refreshToken": "zxGx...", "expiresIn": 900, "isNewUser": false,
   "user": { "id": "…", "email": "r@x.com", "name": "Rahul", "username": "rahul", "avatarUrl": null,
             "plan": "free", "streakCount": 0, "streakUpdatedOn": null, "theme": "system",
-            "font": "grotesk", "palette": "cream",
+            "font": "grotesk", "palette": "cream", "customTheme": null,
             "language": "en", "notifyEmail": true, "notifyPush": true, "recoveryPublicKey": "" },
   "device": { "id": "…", "status": "active" } }
 ```
@@ -116,15 +116,20 @@ Any subset. All Tier 0.
 
 ```json
 { "name": "Rahul", "username": "rahul", "avatarUrl": "https://…", "theme": "dark",
-  "font": "grotesk", "palette": "cream",
+  "font": "grotesk", "palette": "graphite",
+  "customTheme": { "base": "graphite",
+                   "light": { "accent": "#2E3192", "onAccent": "#FFFFFF" },
+                   "dark":  { "accent": "#8B8FE8" } },
   "language": "en", "notifyEmail": true, "notifyPush": false,
   "streakCount": 7, "streakUpdatedOn": "2026-07-26",
   "recoveryPublicKey": "<base64 32B>" }
 ```
 
-Username: `^[a-z0-9_]{3,30}$`, unique, not reserved. `theme` ∈ `system|light|dark`, `font` ∈ `grotesk|sans|serif`, `palette` ∈ `cream|paper|sand`. → the updated `user` object.
+Username: `^[a-z0-9_]{3,30}$`, unique, not reserved. `theme` ∈ `system|light|dark`, `font` ∈ `grotesk|sans|serif`, `palette` ∈ `cream|paper|sand|graphite|midnight|indigo|evergreen`. → the updated `user` object.
 
-Appearance (`theme`, `font`, `palette`) is deliberately Tier 0: it describes how a page is painted, never what it says, and storing it here is what makes a workspace look the same on every device — including on the sign-in and pending-device screens, which render before any space key has been unwrapped.
+`customTheme` is the theme the account built for itself, and it is three-state: leave the field out and the stored theme is untouched, send `null` and the account goes back to painting its preset, send an object and it replaces what was there. `base` is the preset it was forked from, and `light` and `dark` each carry the colours that scheme overrides — only `accent`, `onAccent`, `success`, `warning`, `danger`, `background`, `surface`, `elevated`, `border`, `primaryText` and `secondaryText`, each a `#rrggbb` value. Anything else is a 400. The remaining colours in a palette are derived by the clients from these, so the server never has to know how a theme is built, only that it cannot carry anything but colours.
+
+Appearance (`theme`, `font`, `palette`, `customTheme`) is deliberately Tier 0: it describes how a page is painted, never what it says, and storing it here is what makes a workspace look the same on every device — including on the sign-in and pending-device screens, which render before any space key has been unwrapped.
 
 ### GET /users/{username}
 Public. → `{"id","username","name","avatarUrl"}`. Never email, plan, or settings.

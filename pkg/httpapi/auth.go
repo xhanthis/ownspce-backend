@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -43,9 +44,13 @@ type userPayload struct {
 	Theme           string  `json:"theme"`
 	Font            string  `json:"font"`
 	Palette         string  `json:"palette"`
-	Language        string  `json:"language"`
-	NotifyEmail     bool    `json:"notifyEmail"`
-	NotifyPush      bool    `json:"notifyPush"`
+	// The theme the account built for itself, or null when it is on a preset.
+	// The server stores and returns this shape without reading a colour out of
+	// it — see sanitizeCustomTheme for what it is allowed to contain.
+	CustomTheme json.RawMessage `json:"customTheme"`
+	Language    string          `json:"language"`
+	NotifyEmail bool            `json:"notifyEmail"`
+	NotifyPush  bool            `json:"notifyPush"`
 	// The wire name is historical. The key it carries used to be derived from a
 	// 24-word phrase the person held; it is now an escrow key the server holds
 	// for them. Clients still wrap household keys to it, so the field stays put
@@ -59,7 +64,7 @@ func toUserPayload(u *store.User) userPayload {
 		formatted := u.StreakUpdatedOn.Format("2006-01-02")
 		streakDate = &formatted
 	}
-	return userPayload{ID: u.ID.String(), Email: u.Email, Name: u.Name, Username: u.Username, AvatarURL: u.AvatarURL, Plan: u.Plan, StreakCount: u.StreakCount, StreakUpdatedOn: streakDate, Theme: u.Theme, Font: u.Font, Palette: u.Palette, Language: u.Language, NotifyEmail: u.NotifyEmail, NotifyPush: u.NotifyPush, EscrowPublicKey: encodeB64(u.EscrowPublicKey)}
+	return userPayload{ID: u.ID.String(), Email: u.Email, Name: u.Name, Username: u.Username, AvatarURL: u.AvatarURL, Plan: u.Plan, StreakCount: u.StreakCount, StreakUpdatedOn: streakDate, Theme: u.Theme, Font: u.Font, Palette: u.Palette, CustomTheme: json.RawMessage(u.CustomTheme), Language: u.Language, NotifyEmail: u.NotifyEmail, NotifyPush: u.NotifyPush, EscrowPublicKey: encodeB64(u.EscrowPublicKey)}
 }
 
 type sessionResponse struct {
