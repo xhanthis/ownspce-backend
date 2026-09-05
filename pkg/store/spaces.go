@@ -22,6 +22,11 @@ func RoleAtLeast(have, want string) bool { return roleRank[have] >= roleRank[wan
 
 // SpaceSummary is everything a client needs to start syncing a space. The space
 // NAME is absent by design — it lives encrypted inside the workspace document.
+//
+// EscrowCurrent says whether the account's escrow copy of this space's key is
+// sealed to the escrow key the account has now. False means a device that has
+// never seen the space cannot be let in at sign-in, and a device that holds the
+// key should re-seal it — see Store.ListSpaces.
 type SpaceSummary struct {
 	ID               uuid.UUID
 	Role             string
@@ -31,6 +36,7 @@ type SpaceSummary struct {
 	WorkspaceVersion int64
 	MemberCount      int
 	WrappedKey       []byte
+	EscrowCurrent    bool
 }
 
 // SpaceMeta is the hot-path sync state of a space.
@@ -122,13 +128,17 @@ func insertWrappedKeys(ctx context.Context, tx pgx.Tx, spaceID uuid.UUID, epoch 
 //
 // The account's escrow copy of the key is deliberately not selected. It is
 // sealed to a key only the server can open, so no caller could use it, and
-// handing out ciphertext nobody can read is surface without a purpose.
+// handing out ciphertext nobody can read is surface without a purpose. What is
+// reported is whether that copy is current: sealed to the escrow key the
+// account has now, rather than to one it carried before the server minted its
+// own, or absent because the space predates escrow. A copy with no recorded
+// recipient counts as not current, so it is re-sealed once and recorded.
 // Args: ctx, userID, deviceID (calling device)
 // Returns: summaries ordered by creation, error
 // Handles: spaces whose key is not yet wrapped for this device (WrappedKey nil —
 // the device has not been let in)
 func (s *Store) ListSpaces(ctx context.Context, userID, deviceID uuid.UUID) ([]SpaceSummary, error) {
-	rows, err := s.pool.Query(ctx, "SELECT s.id, m.role, s.key_epoch, s.head_seq, s.oldest_seq, COALESCE(w.version, 0), (SELECT count(*) FROM space_members mm WHERE mm.space_id = s.id), dk.wrapped_key FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL LEFT JOIN workspace_docs w ON w.space_id = s.id LEFT JOIN space_keys dk ON dk.space_id = s.id AND dk.key_epoch = s.key_epoch AND dk.user_id = m.user_id AND dk.device_id = $2 WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID, deviceID)
+	rows, err := s.pool.Query(ctx, "SELECT s.id, m.role, s.key_epoch, s.head_seq, s.oldest_seq, COALESCE(w.version, 0), (SELECT count(*) FROM space_members mm WHERE mm.space_id = s.id), dk.wrapped_key, (ek.id IS NOT NULL) FROM space_members m JOIN spaces s ON s.id = m.space_id AND s.deleted_at IS NULL JOIN users u ON u.id = m.user_id LEFT JOIN workspace_docs w ON w.space_id = s.id LEFT JOIN space_keys dk ON dk.space_id = s.id AND dk.key_epoch = s.key_epoch AND dk.user_id = m.user_id AND dk.device_id = $2 LEFT JOIN space_keys ek ON ek.space_id = s.id AND ek.key_epoch = s.key_epoch AND ek.user_id = m.user_id AND ek.device_id IS NULL AND ek.escrow_public_key = u.recovery_public_key WHERE m.user_id = $1 ORDER BY s.created_at ASC", userID, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +147,7 @@ func (s *Store) ListSpaces(ctx context.Context, userID, deviceID uuid.UUID) ([]S
 	var out []SpaceSummary
 	for rows.Next() {
 		var sp SpaceSummary
-		if err := rows.Scan(&sp.ID, &sp.Role, &sp.KeyEpoch, &sp.HeadSeq, &sp.OldestSeq, &sp.WorkspaceVersion, &sp.MemberCount, &sp.WrappedKey); err != nil {
+		if err := rows.Scan(&sp.ID, &sp.Role, &sp.KeyEpoch, &sp.HeadSeq, &sp.OldestSeq, &sp.WorkspaceVersion, &sp.MemberCount, &sp.WrappedKey, &sp.EscrowCurrent); err != nil {
 			return nil, err
 		}
 		out = append(out, sp)

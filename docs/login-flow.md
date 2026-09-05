@@ -39,10 +39,18 @@ another device handed one workspace key to still collects the rest from escrow.
 so a device that signed in before a copy existed gets it on its next list rather
 than its next sign-in.
 
-When no copy can be delivered at all — the account's escrow copy is stale and no
-device that holds the key has come back to re-seal it — the clients no longer
-wait. An owner is given a fresh household or space, the same as a first sign-in;
-the old one stays listed and comes back the moment a holder re-seals its copy. A
+The copy stays deliverable because every device that holds a key repairs it.
+`GET /spaces` reports `escrowCurrent` per space, and a device that can open a
+space whose copy is missing or stale re-seals the key to the account's current
+escrow key and files it with `POST /spaces/{spaceID}/escrow` — its own account
+only, no fingerprint step, exactly as Money already does through `key-gaps` and
+`keys`. So opening the app once on any device that has the space is enough for
+every device that signs in afterwards to be handed the key.
+
+Only when no copy can be delivered at all — the copy is stale and no device that
+holds the key has opened the app since — does a client stop waiting. An owner is
+given a fresh household or space, the same as a first sign-in; the old one stays
+listed and comes back the moment a holder opens the app and re-seals its copy. A
 Money member who is not the owner does wait, because the owner still holds the
 key and hands it over from Family.
 

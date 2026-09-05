@@ -99,10 +99,68 @@ func (s *Server) handleListSpaces(w http.ResponseWriter, r *http.Request) {
 
 	out := make([]map[string]any, 0, len(spaces))
 	for _, sp := range spaces {
-		item := map[string]any{"id": sp.ID.String(), "role": sp.Role, "keyEpoch": sp.KeyEpoch, "headSeq": sp.HeadSeq, "oldestSeq": sp.OldestSeq, "workspaceVersion": sp.WorkspaceVersion, "memberCount": sp.MemberCount, "wrappedKey": nilIfEmpty(encodeB64(sp.WrappedKey))}
+		item := map[string]any{"id": sp.ID.String(), "role": sp.Role, "keyEpoch": sp.KeyEpoch, "headSeq": sp.HeadSeq, "oldestSeq": sp.OldestSeq, "workspaceVersion": sp.WorkspaceVersion, "memberCount": sp.MemberCount, "wrappedKey": nilIfEmpty(encodeB64(sp.WrappedKey)), "escrowCurrent": sp.EscrowCurrent}
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spaces": out})
+}
+
+type fileEscrowRequest struct {
+	KeyEpoch   int    `json:"keyEpoch"`
+	WrappedKey string `json:"wrappedKey"`
+}
+
+// handleFileEscrow files the caller's own escrow copy of a space key.
+//
+// The escrow copy is how a device that has never seen a space gets in at
+// sign-in. It is missing for a space made before escrow existed, and stale for
+// one sealed to a recovery key the server has since replaced — a row that looks
+// like coverage and opens under nothing. In both cases the only thing that can
+// fix it is a device that holds the key sealing it again, and this is the route
+// that device uses. The body names no user: a member files against their own
+// account's escrow key and nobody else's. A copy already sealed to the current
+// key is left as it is, so filing is safe to repeat.
+// Handles: a stale epoch, refused rather than filing a wrap nobody can use
+func (s *Server) handleFileEscrow(w http.ResponseWriter, r *http.Request) {
+	spaceID, err := parseUUIDParam(chi.URLParam(r, "spaceID"), "spaceId")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	var req fileEscrowRequest
+	if err := decodeJSON(w, r, maxSmallBody, &req); err != nil {
+		writeError(w, err)
+		return
+	}
+	if req.KeyEpoch <= 0 {
+		writeError(w, badRequest("keyEpoch must be the space's current key epoch"))
+		return
+	}
+	wrapped, err := decodeB64(req.WrappedKey, "wrappedKey")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := seal.ValidateWrappedKey(wrapped); err != nil {
+		writeError(w, badRequest("wrappedKey: %v", err))
+		return
+	}
+
+	c := callerFrom(r.Context())
+	granted, err := s.store.GrantSpaceKeys(r.Context(), spaceID, c.UserID, req.KeyEpoch, []store.RotationKey{{UserID: c.UserID, WrappedKey: wrapped}})
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrConflict):
+			writeError(w, errConflict("stale_epoch", "the space key rotated while you were sealing; refetch the space and retry"))
+		case errors.Is(err, store.ErrNotFound):
+			writeError(w, errNotFound("space not found"))
+		default:
+			writeError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"granted": granted})
 }
 
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
