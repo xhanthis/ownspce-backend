@@ -276,7 +276,7 @@ Use the space routes: `GET /spaces/{spaceID}/members`, `DELETE /spaces/{spaceID}
 
 **Every device is in from the moment it signs in**, and the sign-in hands it the account's escrow copy of every household key. There is no approval screen and nothing to poll. A device that lands on a household with no escrow copy — one created before escrow existed — still needs a wrap from a device that holds the key, through `pending-keys` and `approve`.
 
-A browser opening Money with no session of its own should call `POST /auth/continue` with `credentials: "include"` before showing a sign-in screen: somebody already signed in on `app.ownspce.com` is signed in here too.
+A browser opening Money with no session of its own should call `POST /auth/continue` with `credentials: "include"` before showing a sign-in screen: somebody already signed in on `ownspce.com` is signed in here too.
 
 ## Errors
 

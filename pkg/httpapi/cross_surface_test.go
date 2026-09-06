@@ -18,10 +18,20 @@ import (
 // has no way to see the other's session — different storage, different device
 // keypair, different everything. The only thing they share is the cookie on the
 // parent domain, and these tests are the contract for it.
+//
+// The app's origin is the apex: the marketing page and the app are one
+// deployment there, and app.ownspce.com only redirects to it.
+//
+// strangerOrigin and sandboxOrigin are the two shapes of "not an app surface".
+// The second is the important one: a published page — HTML somebody else wrote,
+// served from this same apex — runs inside an iframe sandboxed without
+// allow-same-origin, so its requests arrive with the literal Origin "null".
 
 const (
-	appOrigin   = "https://app.ownspce.com"
-	moneyOrigin = "https://money.ownspce.com"
+	appOrigin      = "https://ownspce.com"
+	moneyOrigin    = "https://money.ownspce.com"
+	strangerOrigin = "https://not-ownspce.example"
+	sandboxOrigin  = "null"
 )
 
 // fromSurface issues a request the way a browser on one of the OwnSpce surfaces
@@ -340,43 +350,55 @@ func TestRefreshLetsInADeviceStrandedByTheOldFlow(t *testing.T) {
 // TestOnlyAnAppSurfaceMaySpendTheCookie is the blast-radius limit on the
 // cross-surface session.
 //
-// The CORS allowlist necessarily contains the marketing origin, which is also
-// where published pages — user-authored HTML — are served from. A cookie the
-// browser will attach to a same-site request plus an endpoint that mints a
-// device from it means one XSS on that origin would register an attacker's own
-// device on somebody's account and have the server hand it every space key from
-// escrow. Reading the response is not even required; the write is the damage.
+// /auth/continue mints a device from an ambient cookie, so any origin that can
+// reach it with that cookie attached can register an attacker's own device on
+// somebody's account and have the server hand it every space key from escrow.
+// Reading the response is not even required; the write is the damage. So the
+// credentialed surfaces are a separate, shorter list than the CORS allowlist,
+// and an origin outside it gets nothing — no cookie issued, and no cookie spent.
 //
-// So the credentialed surfaces are a separate, shorter list than the CORS
-// allowlist, and an origin outside it gets nothing — no cookie issued, and no
-// cookie spent.
+// The "null" case is the one that matters most since the marketing page and the
+// app became one deployment. Published pages — user-authored HTML — are served
+// from that same apex inside an iframe sandboxed without allow-same-origin,
+// which gives the frame an opaque origin. This is the test that the opaque
+// origin buys what a separate hostname used to.
 func TestOnlyAnAppSurfaceMaySpendTheCookie(t *testing.T) {
-	// Arrange — a real session, and its real cookie.
-	h := newHarness(t)
-	_, _, cookie := h.signInFromSurface(t, appOrigin)
-	public, _ := deviceKeypair(t)
-	body := map[string]any{"device": map[string]any{"label": "attacker", "platform": "web", "publicKey": encodeB64(public[:])}}
+	for _, origin := range []string{strangerOrigin, sandboxOrigin} {
+		t.Run(origin, func(t *testing.T) {
+			// Arrange — a real session, and its real cookie.
+			h := newHarness(t)
+			_, _, cookie := h.signInFromSurface(t, appOrigin)
+			public, _ := deviceKeypair(t)
+			body := map[string]any{"device": map[string]any{"label": "attacker", "platform": "web", "publicKey": encodeB64(public[:])}}
 
-	// Act — the same cookie, presented from the publish/marketing origin.
-	rec := h.fromSurface(http.MethodPost, "/v1/auth/continue", h.server.cfg.PublicSiteOrigin, []*http.Cookie{cookie}, nil, body)
+			// Act — the same cookie, presented from an origin that is not an app surface.
+			rec := h.fromSurface(http.MethodPost, "/v1/auth/continue", origin, []*http.Cookie{cookie}, nil, body)
 
-	// Assert — refused, and no device was registered on the way past.
-	requireStatus(t, rec, http.StatusForbidden)
+			// Assert — refused, and no device was registered on the way past.
+			requireStatus(t, rec, http.StatusForbidden)
 
-	var devices int
-	if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM devices WHERE public_key = $1", public[:]).Scan(&devices); err != nil {
-		t.Fatalf("count devices: %v", err)
-	}
-	if devices != 0 {
-		t.Fatalf("a refused origin still registered %d devices", devices)
-	}
+			var devices int
+			if err := h.store.Pool().QueryRow(context.Background(), "SELECT count(*) FROM devices WHERE public_key = $1", public[:]).Scan(&devices); err != nil {
+				t.Fatalf("count devices: %v", err)
+			}
+			if devices != 0 {
+				t.Fatalf("a refused origin still registered %d devices", devices)
+			}
 
-	// And the cookie is never issued to that origin in the first place.
-	signIn := h.fromSurface(http.MethodPost, "/v1/auth/session", h.server.cfg.PublicSiteOrigin, nil, nil,
-		sessionBody(fmt.Sprintf("publish-%s@ownspce.test", uuid.NewString()), h.issueSignInCode(fmt.Sprintf("publish-%s@ownspce.test", uuid.NewString()), nil), public[:]))
-	for _, c := range (&http.Response{Header: signIn.Header()}).Cookies() {
-		if c.Name == sessionCookieName && c.Value != "" {
-			t.Fatal("the marketing origin was handed a cross-surface session cookie")
-		}
+			// And the cookie is never issued to that origin in the first place.
+			email := fmt.Sprintf("publish-%s@ownspce.test", uuid.NewString())
+			signIn := h.fromSurface(http.MethodPost, "/v1/auth/session", origin, nil, nil,
+				sessionBody(email, h.issueSignInCode(email, nil), public[:]))
+			// The sign-in itself is not what is being refused, so it creates a
+			// real account. Register it, or the row outlives the test.
+			if user, ok := decodeBody(t, signIn)["user"].(map[string]any); ok {
+				h.users = append(h.users, uuid.MustParse(user["id"].(string)))
+			}
+			for _, c := range (&http.Response{Header: signIn.Header()}).Cookies() {
+				if c.Name == sessionCookieName && c.Value != "" {
+					t.Fatalf("%s was handed a cross-surface session cookie", origin)
+				}
+			}
+		})
 	}
 }

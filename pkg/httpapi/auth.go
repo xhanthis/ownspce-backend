@@ -192,8 +192,13 @@ func (s *Server) handleAuthContinue(w http.ResponseWriter, r *http.Request) {
 	// Checked before the cookie is even read. This endpoint turns an ambient
 	// credential into a device of the caller's choosing, holding every space key
 	// the account has in escrow — so it answers only to the surfaces that are
-	// meant to have it, never to the wider CORS allowlist that has to include
-	// the origin serving published pages.
+	// meant to have it, never to the wider CORS allowlist.
+	//
+	// A published page is HTML somebody else wrote, and it is served from the
+	// app's own origin now that the marketing page and the app are one
+	// deployment. What keeps it out of here is the iframe it renders in:
+	// sandboxed without allow-same-origin, so it has an opaque origin and
+	// arrives as the literal "null", which is on no list.
 	if !s.cfg.SessionOriginAllowed(r.Header.Get("Origin")) {
 		writeError(w, errForbidden("origin_not_permitted", "this origin cannot continue an OwnSpce session"))
 		return
