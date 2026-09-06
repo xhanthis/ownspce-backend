@@ -37,16 +37,28 @@ type Config struct {
 	// would only mean this field never equalled what a parsed cookie reports.
 	SessionCookieDomain string
 	// SessionOrigins are the surfaces allowed to hold and spend that cookie:
-	// app.ownspce.com and money.ownspce.com, and nothing else.
+	// ownspce.com and money.ownspce.com, and nothing else.
 	//
 	// Deliberately a shorter list than AllowedOrigins rather than the same one.
-	// The CORS allowlist has to contain the marketing origin, and that origin is
-	// also where published pages — HTML somebody else wrote — are served from. A
-	// cookie the browser attaches to a same-site request, plus an endpoint that
-	// mints a device from it, would turn one XSS there into an attacker's own
-	// device sitting on somebody's account with every space key re-wrapped for
-	// it. Reading the response would not even be needed; the write is the
-	// damage. So the credentialed path gets its own, minimal list.
+	// This is the credentialed path, and /auth/continue mints a device from an
+	// ambient cookie, so every origin named here is an origin whose scripts can
+	// put an attacker's own device on somebody's account with every space key
+	// re-wrapped for it — without reading a single response. The write is the
+	// damage.
+	//
+	// It used to be shorter still. The marketing origin was kept off this list
+	// precisely because it is also where published pages — HTML somebody else
+	// wrote — are served from, and one XSS there would have been exactly that
+	// attack. The marketing page and the app are now one deployment on the
+	// apex, so the apex is an app surface and has to be here.
+	//
+	// What kept the two apart is therefore no longer this list; it is a
+	// rendering rule, and it is not optional. A published page must never
+	// execute on this origin: it is served inside an iframe carrying `sandbox`
+	// WITHOUT `allow-same-origin`, which gives it an opaque origin, so its
+	// requests arrive with `Origin: null` and SessionOriginAllowed refuses
+	// them. Only first-party markup runs on ownspce.com itself. Dropping that
+	// sandbox re-opens the hole this list used to close.
 	//
 	// Empty disables the cross-surface session entirely, exactly as an empty
 	// SessionCookieDomain does — an operator has to name the app surfaces on

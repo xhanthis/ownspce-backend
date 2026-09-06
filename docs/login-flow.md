@@ -1,7 +1,11 @@
 # Login flow
 
 How somebody gets from "not signed in" to "reading their own encrypted data", across
-`api.ownspce.com`, `app.ownspce.com` and `money.ownspce.com`.
+`api.ownspce.com`, `ownspce.com` and `money.ownspce.com`.
+
+`ownspce.com` is one deployment serving two things: the marketing page to a
+stranger, and the app to somebody with a session. `app.ownspce.com` redirects
+there path for path and mints nothing of its own.
 
 Two gates are being removed: device approval, and the household approver. This
 document is the design that replaces them.
@@ -136,7 +140,7 @@ would otherwise let a stranger's household become the one the app opens on.
 
 ## 3. One session across the surfaces
 
-`app.ownspce.com` and `money.ownspce.com` are one product. Signing in on either
+`ownspce.com` and `money.ownspce.com` are one product. Signing in on either
 signs in on both.
 
 **Cookie.** `os_session`, set by `/auth/session` and `/auth/refresh`, cleared by
@@ -147,7 +151,7 @@ Domain=.ownspce.com; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=<refresh TT
 ```
 
 It carries a refresh token in its own family — never the access token, never
-anything a script can read. `api.`, `app.` and `money.` share the registrable
+anything a script can read. The apex, `api.` and `money.` share the registrable
 domain, so `SameSite=Lax` still sends it on the sibling XHR, and the CORS
 middleware already answers `Access-Control-Allow-Credentials: true`.
 
@@ -157,13 +161,29 @@ device's public key against the account it names, admits it, and returns the sam
 `sessionResponse` every other door returns. Rate-limited as `AuthRefresh`.
 
 **Only app surfaces may spend it.** `SESSION_ORIGINS` names them, and it is a
-shorter list than the CORS allowlist on purpose: that list has to include the
-origin serving published pages, which is HTML somebody else wrote. One XSS there,
-against an endpoint that mints a device from an ambient cookie, would put an
-attacker's own device on the victim's account with every space key re-wrapped for
-it — and the attacker would not even need to read the response. So the origin is
-checked before the cookie is read, and a stranger origin gets `403
-origin_not_permitted` and is never handed a cookie in the first place.
+shorter list than the CORS allowlist on purpose. The origin is checked before the
+cookie is read, so a stranger origin gets `403 origin_not_permitted` and is never
+handed a cookie in the first place.
+
+That list used to do a second job, and no longer can. Published pages —
+`/@username/slug`, HTML somebody else wrote — were kept off it by living on the
+marketing origin, which was not an app surface. The marketing page and the app
+are now one deployment on that origin, so it *is* an app surface. One XSS on a
+published page, against an endpoint that mints a device from an ambient cookie,
+would put an attacker's own device on the victim's account with every space key
+re-wrapped for it, and the attacker would not even need to read the response.
+
+So the separation moved from the origin list to the frame, and it is now a
+rendering rule that must be honoured by whoever builds the publish route:
+
+```
+<iframe sandbox="allow-popups" src="…">   ← no allow-same-origin
+```
+
+Without `allow-same-origin` the frame has an opaque origin, its requests carry
+`Origin: null`, and `SessionOriginAllowed` refuses them. Only first-party markup
+runs on `ownspce.com` itself. `TestOnlyAnAppSurfaceMaySpendTheCookie` covers the
+stranger origin and the `null` origin; nothing serves published pages yet.
 
 A surface with no session of its own tries this once before painting a sign-in
 screen. It costs one 401 for a browser that has never signed in anywhere.
@@ -180,6 +200,19 @@ before (`ownspce.lastDoor` / `ownspce.lastEmail` in `localStorage`, no network),
 and a returning-user row when an address is remembered. Apple is left off both
 clients until it is registered: a button that fails at the last step is worse
 than no button.
+
+On the web it is no longer a screen. Now that the marketing page and the app are
+one deployment, pressing **Get started** opens the same panel in a dialog over
+the page the visitor was reading, which they can dismiss and carry on reading.
+`/signin` and `/signup` are the addresses that open it directly, and somebody
+sent to a page inside the app while signed out lands on the marketing page with
+the dialog already open and the path they asked for held, so signing in resumes
+their navigation rather than restarting it.
+
+`ownspce.hadSession` in `localStorage` decides what `/` paints while the session
+is still being resumed: a splash for a browser that held one last time, the
+marketing page for one that did not. It is not a credential — forging it buys a
+spinner or a flash of the wrong page, nothing more.
 
 Built twice, once per repo, sharing nothing but design tokens. `ownspce-web` is
 Vite + React and `ownspce-money` is Next; a shared package across two monorepos
@@ -198,9 +231,10 @@ A persistent pill in each surface's header naming the *other* app, in the shape
 Zomato uses to cross into District: the current product's mark, the other
 product's name, and a swap affordance.
 
-It is a plain `<a href="https://money.ownspce.com">` (and back). No token in the
-URL, no handoff parameter — the `.ownspce.com` cookie is the handoff, and
-`/auth/continue` spends it. That is the whole reason section 3 comes first.
+It is a plain `<a href="https://money.ownspce.com">` (and `https://ownspce.com`
+back). No token in the URL, no handoff parameter — the `.ownspce.com` cookie is
+the handoff, and `/auth/continue` spends it. That is the whole reason section 3
+comes first.
 
 ## Migration
 

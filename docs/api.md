@@ -88,7 +88,7 @@ Public. Turns "this browser is signed in to OwnSpce somewhere" into a session on
    →  same shape as POST /auth/session
 ```
 
-`app.ownspce.com` and `money.ownspce.com` are separate origins with separate storage, so each mints its own device keypair and neither can see the other's session. This endpoint spends the shared cookie: it proves the account, registers the calling surface's device as a device of its own, hands it the account escrow copies, and rotates the cookie on the way out.
+`ownspce.com` (the marketing page and the app, one deployment) and `money.ownspce.com` are separate origins with separate storage, so each mints its own device keypair and neither can see the other's session. This endpoint spends the shared cookie: it proves the account, registers the calling surface's device as a device of its own, hands it the account escrow copies, and rotates the cookie on the way out.
 
 Call it with `credentials: "include"`, once, before painting a sign-in screen. A browser that has never signed in anywhere pays one `401` — and its cookie, if it had a dead one, is cleared so the next cold start does not pay again.
 
@@ -101,9 +101,11 @@ Set-Cookie: os_session=…; Domain=ownspce.com; Path=/; Max-Age=…; HttpOnly; S
 
 It carries a refresh token in its own family, so it inherits sliding expiry, replay detection and family revocation from the ordinary token machinery. `HttpOnly` keeps it out of reach of script on every surface at once; `SameSite=Lax` is sufficient because api, app and money share a registrable domain and the request is therefore same-site.
 
-Set **both** `SESSION_COOKIE_DOMAIN` (e.g. `ownspce.com`) and `SESSION_ORIGINS` (e.g. `https://app.ownspce.com,https://money.ownspce.com`) to enable it. With either unset — the right answer locally, and for any deployment whose surfaces do not share a domain — no cookie is issued and each surface asks for its own sign-in.
+Set **both** `SESSION_COOKIE_DOMAIN` (e.g. `ownspce.com`) and `SESSION_ORIGINS` (e.g. `https://ownspce.com,https://money.ownspce.com`) to enable it. With either unset — the right answer locally, and for any deployment whose surfaces do not share a domain — no cookie is issued and each surface asks for its own sign-in.
 
-`SESSION_ORIGINS` is deliberately **shorter than the CORS allowlist** and must never contain `PUBLIC_SITE_ORIGIN`. That origin serves published pages, which are HTML somebody else wrote; a cookie the browser attaches to same-site requests plus an endpoint that mints a device from it would turn one XSS there into an attacker's own device on somebody's account, holding every space key re-wrapped from escrow. Reading the response would not even be needed — the registration is the damage. An origin outside `SESSION_ORIGINS` is never handed the cookie and gets `403 origin_not_permitted` from `/auth/continue`.
+`SESSION_ORIGINS` is deliberately **shorter than the CORS allowlist**: name only the app surfaces. An origin outside it is never handed the cookie and gets `403 origin_not_permitted` from `/auth/continue`. Every origin on the list is an origin whose scripts can register an attacker's own device on somebody's account, holding every space key re-wrapped from escrow — reading the response is not even needed, the registration is the damage.
+
+> **Published pages must never execute on a session origin.** `/@username/slug` serves HTML somebody else wrote, and since the marketing page and the app became one deployment it serves it from `ownspce.com` — a session origin. What keeps the two apart is no longer the origin list but the frame: the page body is rendered in an `<iframe sandbox="allow-popups">` **without** `allow-same-origin`, so it has an opaque origin and its requests arrive as `Origin: null`, which is on no list. Only first-party markup may run on `ownspce.com` itself. Adding `allow-same-origin` to that frame re-opens the hole. `TestOnlyAnAppSurfaceMaySpendTheCookie` pins both halves.
 
 ### POST /auth/logout
 Revokes the calling device's refresh tokens, and clears **and revokes** the cross-surface cookie. Signing out of Money and staying silently signed in on app is worse than signing out of both. → `204`.

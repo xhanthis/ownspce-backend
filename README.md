@@ -78,7 +78,16 @@ go run ./cmd/e2e                                # full encrypted sync cycle, nee
 
 Production env vars already set: `DATABASE_URL` (pooled Neon), `JWT_PRIVATE_KEY`, `JWT_PUBLIC_KEY`, `GOOGLE_CLIENT_IDS`, `PUBLIC_SITE_ORIGIN`, `ENV=production`, `BLOB_READ_WRITE_TOKEN` (store `ownspce-blob-api`). `APPLE_BUNDLE_ID` is unset until Apple Sign-In is registered — until then that provider returns `503 unavailable` and Google works normally.
 
-`ALLOWED_ORIGINS` is the browser CORS allowlist beyond the public site — set it to `https://app.ownspce.com` so the web client can call the API. `PUBLIC_SITE_ORIGIN` is always included automatically, and any `http://localhost` origin is accepted outside production. The web client also needs its Google **Web** OAuth client id added to `GOOGLE_CLIENT_IDS`.
+`ALLOWED_ORIGINS` is the browser CORS allowlist beyond the public site. `PUBLIC_SITE_ORIGIN` (`https://ownspce.com`) is always included automatically and is now also where the web client lives, so this only needs the other surfaces — `https://money.ownspce.com`, and `https://app.ownspce.com` for as long as the old hostname is still reachable. Any `http://localhost` origin is accepted outside production. The web client also needs its Google **Web** OAuth client id added to `GOOGLE_CLIENT_IDS`, with `https://ownspce.com` as an authorised JavaScript origin.
+
+`SESSION_COOKIE_DOMAIN` and `SESSION_ORIGINS` turn on the cross-surface session — one sign-in across the app and Money. **Both must be set or the feature is silently off**, and each surface asks for its own sign-in:
+
+```bash
+vercel env add SESSION_COOKIE_DOMAIN production   # ownspce.com
+vercel env add SESSION_ORIGINS production         # https://ownspce.com,https://money.ownspce.com
+```
+
+See `docs/api.md` for why that list must stay shorter than the CORS allowlist, and for the sandbox rule that published pages depend on.
 
 Three deployment facts worth knowing before changing anything:
 
@@ -99,7 +108,9 @@ echo | openssl s_client -connect api.ownspce.com:443 -servername api.ownspce.com
   | openssl x509 -noout -subject     # expect CN=api.ownspce.com
 ```
 
-Public pages are served by the separate **ownspce.com** frontend project at `/@username/slug`; it reads `GET /v1/public/pages/:username/:slug` from this API and streams the HTML blob.
+Public pages are served at `ownspce.com/@username/slug`, by the same frontend project that serves the marketing page and the app; it reads `GET /v1/public/pages/:username/:slug` from this API and streams the HTML blob.
+
+That page is HTML somebody else wrote, on an origin that holds the `os_session` cookie. It **must** be rendered inside an `<iframe sandbox>` without `allow-same-origin` — see `docs/api.md`. Nothing serves it today; this is the constraint on whoever builds it.
 
 ## Build order
 
