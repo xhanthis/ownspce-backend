@@ -42,6 +42,10 @@ var (
 	EmailCodeSend   = Rule{Name: "email_code_send", Max: 15, Window: time.Hour}
 	EmailCodeVerify = Rule{Name: "email_code_verify", Max: 30, Window: time.Hour}
 
+	// Each preview opens a connection to a site the user chose, so the cap is
+	// what a person pasting links can reach, not what a loop can.
+	LinkPreview = Rule{Name: "link_preview", Max: 60, Window: time.Minute}
+
 	AutomationWrite = Rule{Name: "automation_write", Max: 30, Window: time.Hour}
 	AutomationRead  = Rule{Name: "automation_read", Max: 240, Window: time.Minute}
 	DaemonPoll      = Rule{Name: "daemon_poll", Max: 120, Window: time.Minute}
