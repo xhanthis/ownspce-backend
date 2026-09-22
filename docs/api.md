@@ -10,12 +10,13 @@ Authenticated routes take `Authorization: Bearer <accessToken>`. Errors are unif
 
 | Status | Codes seen |
 |---|---|
-| 400 | `invalid_request` |
+| 400 | `invalid_request`, `link_blocked` |
 | 401 | `unauthorized`, `token_reused`, `token_expired` |
 | 403 | `device_pending`, `insufficient_role`, `approval_required`, `origin_not_permitted`, `publish_limit`, `email_unverified`, `owner_immutable` |
 | 404 | `not_found` |
 | 409 | `username_taken`, `username_reserved`, `slug_reserved`, `stale_epoch`, `epoch_conflict`, `version_conflict`, `snapshot_conflict`, `already_member_or_stale_epoch` |
 | 413 | `bucket_violation`, `payload_too_large` |
+| 422 | `preview_unavailable` |
 | 429 | `rate_limited` (with `Retry-After`) |
 | 451 | `taken_down` |
 | 503 | `unavailable` |
@@ -326,6 +327,23 @@ Viewer role. → `200` with `application/octet-stream`. Proxied rather than redi
 
 ### DELETE /spaces/{id}/attachments/{attachmentId}
 Editor role. Removes the row and sweeps the object behind it. → `204`.
+
+---
+
+## Link previews
+
+A pasted link is drawn as a card — title, description, image, site icon — and a browser cannot read another site's HTML to build one, so the API reads the page on the client's behalf. This is the one route that sees what a user is reading, and it is built around forgetting it: the address travels in the body, is never logged or stored, and nothing about the request is counted beyond the rate limit. What comes back is written into the page's sealed content by the client; the server keeps no copy.
+
+### POST /link-preview
+Signed in; no space role and no active device needed, since nothing sealed is involved. Rate limited at 60/min per user.
+
+```json
+{ "url": "https://example.com/post" }
+```
+
+→ `200 {"url","title","description","image","siteName","icon"}`. Empty strings mean the page did not say; `icon` falls back to the site's `/favicon.ico`. `url` is the address as given, minus any fragment; `image` and `icon` are resolved to absolute `http(s)` addresses against the page that finally answered. Text is whitespace-collapsed, stripped of control characters and capped (200 characters for the title and site name, 500 for the description).
+
+Refusals: `400 invalid_request` for anything that is not an `http(s)` address; `400 link_blocked` for an address on a non-default port or one that resolves to this machine, a private or link-local network, or a range that carries an IPv4 address inside an IPv6 one — checked again at connect time, on the resolved IP, so a name that changes its answer between lookup and dial is refused as well; `422 preview_unavailable` when the page did not answer within eight seconds, answered with an error, bounced through more than three redirects, or is not HTML. A client that gets a `422` should still draw the card from the address alone.
 
 ---
 

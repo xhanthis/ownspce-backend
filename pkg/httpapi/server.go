@@ -14,6 +14,7 @@ import (
 	"github.com/ownspce/backend/pkg/blob"
 	"github.com/ownspce/backend/pkg/config"
 	"github.com/ownspce/backend/pkg/escrow"
+	"github.com/ownspce/backend/pkg/linkpreview"
 	"github.com/ownspce/backend/pkg/mailer"
 	"github.com/ownspce/backend/pkg/ratelimit"
 	"github.com/ownspce/backend/pkg/store"
@@ -44,6 +45,7 @@ type Server struct {
 	mailer   *mailer.Mailer
 	escrow   *escrow.Keeper
 	uploads  *auth.UploadGrants
+	previews *linkpreview.Fetcher
 	handler  http.Handler
 }
 
@@ -59,6 +61,7 @@ func New(cfg *config.Config, st *store.Store) *Server {
 		mailer:   mailer.New(cfg.AutosendAPIKey, cfg.EmailFromAddress, cfg.EmailFromName, cfg.IsProduction()),
 		escrow:   escrow.New(cfg.EscrowMasterKey),
 		uploads:  auth.NewUploadGrants(cfg.JWTPrivateKey),
+		previews: linkpreview.New(),
 	}
 	s.handler = s.routes()
 	return s
@@ -104,6 +107,10 @@ func (s *Server) routes() http.Handler {
 			r.With(s.rateLimit(ratelimit.EmailCodeSend, subjectUser)).Post("/devices/{deviceID}/verify-email/code", s.handleDeviceEmailCode)
 			r.Post("/devices/{deviceID}/approve", s.handleApproveDevice)
 			r.Delete("/devices/{deviceID}", s.handleRevokeDevice)
+
+			// Outside requireActiveDevice on purpose: a preview reads nothing
+			// sealed, so a device that has no space key yet may still ask.
+			r.With(s.rateLimit(ratelimit.LinkPreview, subjectUser)).Post("/link-preview", s.handleLinkPreview)
 
 			r.Group(func(r chi.Router) {
 				r.Use(s.requireActiveDevice)
