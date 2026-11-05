@@ -66,6 +66,19 @@ The integration suite creates its own users and deletes them afterwards (deletio
 
 `go build ./...` fails on `./api` with "function main is undeclared" — expected. The Vercel Go runtime generates the `main` shim around the exported `Handler`. Build `./internal/... ./cmd/...` locally and let `go vet ./...` cover the entrypoint.
 
+## Home (`pkg/home`)
+
+A separate, deliberately plain API for the Home app (`ownspce-money/apps/home`): one server per household, username and password sign-in, rows stored readable in its own `home_*` tables. It shares nothing with the zero-knowledge API above except this module.
+
+```bash
+HOME_DATABASE_URL=postgres://… go run ./cmd/home                       # serve on PORT, default 5002
+HOME_DATABASE_URL=postgres://… go run ./cmd/home adduser <user> "<Name>"  # password read from stdin
+HOME_DATABASE_URL=postgres://… go run ./cmd/home passwd <user>            # replace it; signs that account out
+HOME_TEST_DATABASE_URL=postgres://… go test ./pkg/home                    # skips when unset
+```
+
+Passwords are bcrypt; sessions are 90-day bearer tokens of which only the SHA-256 is stored; failed sign-ins are throttled to 10 per username per 15 minutes. Every account can read and edit the whole ledger.
+
 ## Deploy
 
 Live at **https://api.ownspce.com/v1** (Vercel project `ownspce-backend`, scope `xhanthis-projects`), also reachable at `https://ownspce-backend.vercel.app/v1`.
