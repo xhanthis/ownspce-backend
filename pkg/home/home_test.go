@@ -344,3 +344,10 @@ func TestProductionConfigRefusesLocalhost(t *testing.T) {
 		t.Fatal("localhost allowed in production")
 	}
 }
+
+func TestSharedRefusesToStartWithoutADatabase(t *testing.T) {
+	t.Setenv("HOME_DATABASE_URL", "")
+	if _, err := Shared(context.Background()); err == nil {
+		t.Fatal("Shared started with no HOME_DATABASE_URL")
+	}
+}
