@@ -385,7 +385,7 @@ func (b entryBody) validate() (Entry, error) {
 	case !entryTypes[b.Type]:
 		return Entry{}, badRequest("type must be expense or income")
 	case b.AmountMinor <= 0 || b.AmountMinor > maxAmountMinor:
-		return Entry{}, badRequest("amount must be positive")
+		return Entry{}, badRequest("amount must be more than zero and at most 1,000,000,000")
 	case b.CategoryID == uuid.Nil:
 		return Entry{}, badRequest("pick a category")
 	case !textBetween(note, 0, 200):
