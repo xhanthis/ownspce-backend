@@ -150,8 +150,12 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
-	config.MaxConns = 8
+	config.MaxConns = 4
+	config.MinConns = 0
 	config.ConnConfig.ConnectTimeout = 5 * time.Second
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	config.ConnConfig.StatementCacheCapacity = 0
+	config.ConnConfig.DescriptionCacheCapacity = 0
 
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -505,6 +509,36 @@ func (s *Store) RemoveHolding(ctx context.Context, id uuid.UUID) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// LoginFailures counts the failed sign-ins on one username in the window starting at windowStart.
+func (s *Store) LoginFailures(ctx context.Context, username string, windowStart time.Time) (int, error) {
+	var failures int
+	err := s.pool.QueryRow(ctx, "SELECT failures FROM home_login_failures WHERE username = $1 AND window_start = $2", username, windowStart).Scan(&failures)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read login failures: %w", err)
+	}
+	return failures, nil
+}
+
+// RecordLoginFailure adds one failed sign-in to the username's current window, atomically.
+func (s *Store) RecordLoginFailure(ctx context.Context, username string, windowStart time.Time) error {
+	_, err := s.pool.Exec(ctx, "INSERT INTO home_login_failures (username, window_start, failures) VALUES ($1, $2, 1) ON CONFLICT (username, window_start) DO UPDATE SET failures = home_login_failures.failures + 1", username, windowStart)
+	if err != nil {
+		return fmt.Errorf("record login failure: %w", err)
+	}
+	return nil
+}
+
+// ClearLoginFailures forgets a username's failures after it signs in, and sweeps windows older than a day.
+func (s *Store) ClearLoginFailures(ctx context.Context, username string) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM home_login_failures WHERE username = $1 OR window_start < now() - interval '1 day'", username); err != nil {
+		return fmt.Errorf("clear login failures: %w", err)
 	}
 	return nil
 }

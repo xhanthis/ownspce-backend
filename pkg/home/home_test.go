@@ -36,7 +36,7 @@ func testServer(t *testing.T) (*httptest.Server, string, string) {
 	if _, err := store.CreateUser(context.Background(), username, "Test Person", hash); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	server := httptest.NewServer(NewServer(store))
+	server := httptest.NewServer(NewServer(store, Config{WebOrigins: []string{"https://home.example.invalid"}, AllowLocalhost: true}))
 	t.Cleanup(server.Close)
 	return server, username, "correct horse battery"
 }
@@ -264,5 +264,83 @@ func TestHoldingKeepsItsExactUnitCount(t *testing.T) {
 	}
 	if status, _ := call(t, server, http.MethodDelete, fmt.Sprintf("/v1/holdings/%s", created["id"]), token, nil); status != http.StatusNoContent {
 		t.Fatalf("remove: %d", status)
+	}
+}
+
+func TestBrowsersGetCORSOnlyForAllowedOrigins(t *testing.T) {
+	server, _, _ := testServer(t)
+
+	cases := []struct {
+		name    string
+		origin  string
+		allowed bool
+	}{
+		{"the configured web origin", "https://home.example.invalid", true},
+		{"a localhost dev server outside production", "http://localhost:5173", true},
+		{"a lookalike host", "https://home.example.invalid.attacker.invalid", false},
+		{"a localhost prefix trick", "http://localhost.attacker.invalid", false},
+		{"no origin at all", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request, _ := http.NewRequest(http.MethodOptions, server.URL+"/v1/entries", nil)
+			request.Header.Set("Access-Control-Request-Method", http.MethodPost)
+			if tc.origin != "" {
+				request.Header.Set("Origin", tc.origin)
+			}
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			response.Body.Close()
+			got := response.Header.Get("Access-Control-Allow-Origin")
+			if (tc.allowed && got != tc.origin) || (!tc.allowed && got != "") {
+				t.Fatalf("allow-origin %q for %q", got, tc.origin)
+			}
+			if response.StatusCode != http.StatusNoContent {
+				t.Fatalf("preflight status %d", response.StatusCode)
+			}
+		})
+	}
+}
+
+func TestLoginThrottleHoldsAcrossServerInstances(t *testing.T) {
+	first, username, password := testServer(t)
+	store, err := Open(context.Background(), os.Getenv("HOME_TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(store.Close)
+	second := httptest.NewServer(NewServer(store, Config{}))
+	t.Cleanup(second.Close)
+
+	for attempt := 0; attempt < loginFailures; attempt++ {
+		call(t, first, http.MethodPost, "/v1/auth/login", "", map[string]string{"username": username, "password": "nope nope"})
+	}
+	status, _ := call(t, second, http.MethodPost, "/v1/auth/login", "", map[string]string{"username": username, "password": password})
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("another instance let a throttled username in: %d", status)
+	}
+}
+
+func TestASuccessfulLoginClearsEarlierFailures(t *testing.T) {
+	server, username, password := testServer(t)
+	for attempt := 0; attempt < loginFailures-1; attempt++ {
+		call(t, server, http.MethodPost, "/v1/auth/login", "", map[string]string{"username": username, "password": "nope nope"})
+	}
+	signIn(t, server, username, password)
+	call(t, server, http.MethodPost, "/v1/auth/login", "", map[string]string{"username": username, "password": "nope nope"})
+	signIn(t, server, username, password)
+}
+
+func TestProductionConfigRefusesLocalhost(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("HOME_WEB_ORIGINS", " https://money.example.invalid/ ,")
+	config := ConfigFromEnv()
+	if !config.originAllowed("https://money.example.invalid") {
+		t.Fatal("configured origin refused")
+	}
+	if config.originAllowed("http://localhost:5173") {
+		t.Fatal("localhost allowed in production")
 	}
 }

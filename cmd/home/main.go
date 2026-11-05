@@ -62,7 +62,7 @@ func serve(ctx context.Context, store *home.Store) {
 	if port == "" {
 		port = "5002"
 	}
-	server := &http.Server{Addr: ":" + port, Handler: home.NewServer(store), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	server := &http.Server{Addr: ":" + port, Handler: home.NewServer(store, home.ConfigFromEnv()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 
 	go func() {
 		<-ctx.Done()

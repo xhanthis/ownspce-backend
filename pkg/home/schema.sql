@@ -14,3 +14,6 @@ CREATE INDEX IF NOT EXISTS home_entries_occurred_idx ON home_entries (occurred_o
 CREATE TABLE IF NOT EXISTS home_budgets (category_id uuid PRIMARY KEY REFERENCES home_categories(id) ON DELETE CASCADE, limit_minor bigint NOT NULL CHECK (limit_minor > 0), updated_at timestamptz NOT NULL DEFAULT now());
 
 CREATE TABLE IF NOT EXISTS home_holdings (id uuid PRIMARY KEY, owner_id uuid REFERENCES home_users(id) ON DELETE SET NULL, name text NOT NULL, badge text NOT NULL, asset_type text NOT NULL, units numeric(24, 6) NOT NULL CHECK (units >= 0), avg_cost_minor bigint NOT NULL CHECK (avg_cost_minor >= 0), last_price_minor bigint NOT NULL CHECK (last_price_minor >= 0), sip_minor bigint NOT NULL DEFAULT 0 CHECK (sip_minor >= 0), color text NOT NULL, note text NOT NULL DEFAULT '', priced_at timestamptz NOT NULL DEFAULT now(), created_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS home_login_failures (username text NOT NULL, window_start timestamptz NOT NULL, failures integer NOT NULL DEFAULT 1, PRIMARY KEY (username, window_start));
+CREATE INDEX IF NOT EXISTS home_login_failures_window_idx ON home_login_failures (window_start);

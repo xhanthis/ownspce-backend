@@ -10,9 +10,9 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -23,14 +23,13 @@ import (
 )
 
 const (
-	sessionTTL       = 90 * 24 * time.Hour
-	maxBodyBytes     = 64 << 10
-	requestTimeout   = 10 * time.Second
-	maxAmountMinor   = 100_000_000_000
-	loginWindow      = 15 * time.Minute
-	loginFailures    = 10
-	maxTrackedLogins = 1000
-	MinPassword      = 8
+	sessionTTL     = 90 * 24 * time.Hour
+	maxBodyBytes   = 64 << 10
+	requestTimeout = 10 * time.Second
+	maxAmountMinor = 100_000_000_000
+	loginWindow    = 15 * time.Minute
+	loginFailures  = 10
+	MinPassword    = 8
 )
 
 var (
@@ -69,18 +68,69 @@ var (
 type ctxKey struct{}
 
 type Server struct {
-	store   *Store
-	limiter *loginLimiter
+	store  *Store
+	config Config
+}
+
+// Config is what a deployment decides about who may call it.
+type Config struct {
+	// WebOrigins are the browser origins allowed to call the API, e.g. https://money.ownspce.com.
+	WebOrigins []string
+	// AllowLocalhost lets any http://localhost origin through, for running the web app locally.
+	AllowLocalhost bool
+}
+
+// ConfigFromEnv reads HOME_WEB_ORIGINS (comma-separated) and allows localhost unless ENV is production.
+func ConfigFromEnv() Config {
+	var origins []string
+	for _, origin := range strings.Split(os.Getenv("HOME_WEB_ORIGINS"), ",") {
+		if trimmed := strings.TrimRight(strings.TrimSpace(origin), "/"); trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return Config{WebOrigins: origins, AllowLocalhost: os.Getenv("ENV") != "production"}
+}
+
+func (c Config) originAllowed(origin string) bool {
+	if origin == "" {
+		return false
+	}
+	for _, allowed := range c.WebOrigins {
+		if origin == allowed {
+			return true
+		}
+	}
+	return c.AllowLocalhost && (origin == "http://localhost" || strings.HasPrefix(origin, "http://localhost:"))
+}
+
+// cors answers browser preflights and marks responses readable by the allowed web origins.
+// Bearer tokens ride in a header, never a cookie, so credentials are not allowed.
+func (s *Server) cors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		w.Header().Add("Vary", "Origin")
+		if s.config.originAllowed(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+		if r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // NewServer builds the HTTP handler for Home over an opened store.
-// Args: store (from Open)
+// Args: store (from Open), config (allowed web origins)
 // Returns: a handler serving every route under /v1
-func NewServer(store *Store) http.Handler {
-	server := &Server{store: store, limiter: &loginLimiter{failures: map[string][]time.Time{}}}
+func NewServer(store *Store, config Config) http.Handler {
+	server := &Server{store: store, config: config}
 
 	router := chi.NewRouter()
-	router.Use(middleware.RequestID, middleware.Recoverer, middleware.Timeout(requestTimeout))
+	router.Use(middleware.RequestID, middleware.Recoverer, server.cors, middleware.Timeout(requestTimeout))
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -154,29 +204,39 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errBadLogin)
 		return
 	}
-	limitKey := username
-	if !s.limiter.allow(limitKey) {
-		writeError(w, r, errTooMany)
-		return
-	}
-
-	user, err := s.store.UserByUsername(r.Context(), username)
-	if errors.Is(err, ErrNotFound) {
-		_ = bcrypt.CompareHashAndPassword(dummyHash, []byte(body.Password))
-		s.limiter.fail(limitKey)
-		writeError(w, r, errBadLogin)
-		return
-	}
+	ctx := r.Context()
+	window := time.Now().UTC().Truncate(loginWindow)
+	failures, err := s.store.LoginFailures(ctx, username, window)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	if bcrypt.CompareHashAndPassword([]byte(user.passwordHash), []byte(body.Password)) != nil {
-		s.limiter.fail(limitKey)
+	if failures >= loginFailures {
+		writeError(w, r, errTooMany)
+		return
+	}
+
+	user, err := s.store.UserByUsername(ctx, username)
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		writeError(w, r, err)
+		return
+	}
+	hash := dummyHash
+	if err == nil {
+		hash = []byte(user.passwordHash)
+	}
+	if bcrypt.CompareHashAndPassword(hash, []byte(body.Password)) != nil || err != nil {
+		if recordErr := s.store.RecordLoginFailure(ctx, username, window); recordErr != nil {
+			writeError(w, r, recordErr)
+			return
+		}
 		writeError(w, r, errBadLogin)
 		return
 	}
-	s.limiter.clear(limitKey)
+	if err := s.store.ClearLoginFailures(ctx, username); err != nil {
+		writeError(w, r, err)
+		return
+	}
 
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
@@ -629,51 +689,4 @@ func set(values ...string) map[string]bool {
 		out[value] = true
 	}
 	return out
-}
-
-// loginLimiter counts failed sign-ins per username over a sliding window. It keys on the
-// username alone because a client-supplied address is spoofable, and it is in memory
-// because Home runs as one process and a restart forgetting the count is acceptable.
-type loginLimiter struct {
-	mu       sync.Mutex
-	failures map[string][]time.Time
-}
-
-func (l *loginLimiter) recent(key string, now time.Time) []time.Time {
-	kept := l.failures[key][:0]
-	for _, at := range l.failures[key] {
-		if now.Sub(at) < loginWindow {
-			kept = append(kept, at)
-		}
-	}
-	if len(kept) == 0 {
-		delete(l.failures, key)
-		return nil
-	}
-	l.failures[key] = kept
-	return kept
-}
-
-func (l *loginLimiter) allow(key string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return len(l.recent(key, time.Now())) < loginFailures
-}
-
-func (l *loginLimiter) fail(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	now := time.Now()
-	if len(l.failures) >= maxTrackedLogins {
-		for tracked := range l.failures {
-			l.recent(tracked, now)
-		}
-	}
-	l.failures[key] = append(l.recent(key, now), now)
-}
-
-func (l *loginLimiter) clear(key string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.failures, key)
 }
