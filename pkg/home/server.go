@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +26,8 @@ import (
 const (
 	sessionTTL     = 90 * 24 * time.Hour
 	maxBodyBytes   = 64 << 10
+	maxImportBytes = 2 << 20
+	importPath     = "/v1/entries/import"
 	requestTimeout = 10 * time.Second
 	maxAmountMinor = 100_000_000_000
 	loginWindow    = 15 * time.Minute
@@ -133,7 +136,11 @@ func NewServer(store *Store, config Config) http.Handler {
 	router.Use(middleware.RequestID, middleware.Recoverer, server.cors, middleware.Timeout(requestTimeout))
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+			limit := int64(maxBodyBytes)
+			if r.URL.Path == importPath {
+				limit = maxImportBytes
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			next.ServeHTTP(w, r)
 		})
 	})
@@ -153,6 +160,7 @@ func NewServer(store *Store, config Config) http.Handler {
 			authed.Patch("/settings", server.updateSettings)
 			authed.Get("/entries", server.listEntries)
 			authed.Post("/entries", server.createEntry)
+			authed.Post("/entries/import", server.importEntries)
 			authed.Put("/entries/{id}", server.replaceEntry)
 			authed.Delete("/entries/{id}", server.removeEntry)
 			authed.Put("/budgets/{categoryId}", server.saveBudget)
@@ -488,6 +496,48 @@ func (s *Server) writeEntry(w http.ResponseWriter, r *http.Request, id *uuid.UUI
 		return
 	}
 	writeJSON(w, status, saved)
+}
+
+type importBody struct {
+	Entries []entryBody `json:"entries"`
+	DryRun  bool        `json:"dryRun"`
+}
+
+// importEntries adds the rows of a spreadsheet in one go, or with dryRun only counts what would be added.
+// Handles: an empty or oversized file, a bad row (named by its position), rows already in the ledger
+func (s *Server) importEntries(w http.ResponseWriter, r *http.Request) {
+	var body importBody
+	if err := decode(r, &body); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if len(body.Entries) == 0 || len(body.Entries) > MaxImportRows {
+		writeError(w, r, badRequest(fmt.Sprintf("import between 1 and %d entries at a time", MaxImportRows)))
+		return
+	}
+	entries := make([]Entry, 0, len(body.Entries))
+	for index, row := range body.Entries {
+		entry, err := row.validate()
+		if err != nil {
+			var invalid apiError
+			if errors.As(err, &invalid) {
+				err = badRequest(fmt.Sprintf("row %d: %s", index+1, invalid.Message))
+			}
+			writeError(w, r, err)
+			return
+		}
+		entries = append(entries, entry)
+	}
+	result, err := s.store.ImportEntries(r.Context(), entries, actor(r).ID, body.DryRun)
+	if errors.Is(err, ErrInvalid) {
+		writeError(w, r, badRequest("a category or payer in the file does not exist here"))
+		return
+	}
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Server) removeEntry(w http.ResponseWriter, r *http.Request) {
