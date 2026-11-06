@@ -29,7 +29,7 @@ const (
 	maxAmountMinor = 100_000_000_000
 	loginWindow    = 15 * time.Minute
 	loginFailures  = 10
-	MinPassword    = 8
+	MinPassword    = 5
 )
 
 var (
@@ -169,7 +169,7 @@ func NewServer(store *Store, config Config) http.Handler {
 // Returns: an error when the password is shorter than MinPassword or longer than bcrypt accepts
 func HashPassword(password string) (string, error) {
 	if len(password) < MinPassword {
-		return "", errors.New("password must be at least 8 characters")
+		return "", errors.New("password must be at least 5 characters")
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
