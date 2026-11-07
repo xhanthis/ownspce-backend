@@ -351,3 +351,61 @@ func TestSharedRefusesToStartWithoutADatabase(t *testing.T) {
 		t.Fatal("Shared started with no HOME_DATABASE_URL")
 	}
 }
+
+func TestImportAddsRowsOnceAndKeepsNothingFromABadFile(t *testing.T) {
+	server, username, password := testServer(t)
+	token := signIn(t, server, username, password)
+	expense := categoryOfKind(t, server, token, "expense")
+	income := categoryOfKind(t, server, token, "income")
+	note := "import " + uuid.NewString()
+	row := func(day string, amount int, category, kind string) map[string]any {
+		return map[string]any{"occurredOn": day, "type": kind, "amountMinor": amount, "categoryId": category, "note": note, "isShared": true}
+	}
+	file := []any{row("2026-01-05", 2000, expense, "expense"), row("2026-01-05", 2000, expense, "expense"), row("2026-01-06", 90000, income, "income")}
+	countInJanuary := func() int {
+		_, listed := call(t, server, http.MethodGet, "/v1/entries?from=2026-01-01&to=2026-01-31", token, nil)
+		found := 0
+		for _, raw := range listed["entries"].([]any) {
+			if raw.(map[string]any)["note"] == note {
+				found++
+			}
+		}
+		return found
+	}
+
+	status, preview := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": file, "dryRun": true})
+	if status != http.StatusOK || preview["created"].(float64) != 3 || preview["duplicates"].(float64) != 0 || countInJanuary() != 0 {
+		t.Fatalf("dry run: %d %v, stored %d", status, preview, countInJanuary())
+	}
+
+	status, first := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": file})
+	if status != http.StatusOK || first["created"].(float64) != 3 || countInJanuary() != 3 {
+		t.Fatalf("first import: %d %v, stored %d", status, first, countInJanuary())
+	}
+
+	status, again := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": append(file, row("2026-01-05", 2000, expense, "expense"))})
+	if status != http.StatusOK || again["created"].(float64) != 1 || again["duplicates"].(float64) != 3 || countInJanuary() != 4 {
+		t.Fatalf("second import: %d %v, stored %d", status, again, countInJanuary())
+	}
+
+	bad := []any{row("2026-01-07", 500, expense, "expense"), row("2026-01-07", 500, income, "expense")}
+	if status, _ := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": bad}); status != http.StatusBadRequest || countInJanuary() != 4 {
+		t.Fatalf("mixed-kind file: %d, stored %d", status, countInJanuary())
+	}
+	invalid := []any{row("2026-01-07", 500, expense, "expense"), row("2026-02-30", 500, expense, "expense")}
+	status, refused := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": invalid})
+	if status != http.StatusBadRequest || !strings.HasPrefix(refused["error"].(map[string]any)["message"].(string), "row 2:") || countInJanuary() != 4 {
+		t.Fatalf("bad day: %d %v", status, refused)
+	}
+
+	if status, _ := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": []any{}}); status != http.StatusBadRequest {
+		t.Fatalf("empty file: %d", status)
+	}
+	tooMany := make([]any, MaxImportRows+1)
+	for index := range tooMany {
+		tooMany[index] = row("2026-01-08", 100, expense, "expense")
+	}
+	if status, _ := call(t, server, http.MethodPost, "/v1/entries/import", token, map[string]any{"entries": tooMany}); status != http.StatusBadRequest {
+		t.Fatalf("over the cap: %d", status)
+	}
+}

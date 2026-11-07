@@ -31,6 +31,9 @@ var (
 // MaxEntriesPerRead caps one ledger read so a wide period cannot pull an unbounded result.
 const MaxEntriesPerRead = 5000
 
+// MaxImportRows caps one CSV import so it lands well inside the request timeout.
+const MaxImportRows = 2000
+
 const maxMembers = 100
 
 type Store struct {
@@ -405,6 +408,113 @@ func (s *Store) SaveEntry(ctx context.Context, id *uuid.UUID, entry Entry, actor
 		return Entry{}, fmt.Errorf("save entry: %w", err)
 	}
 	return saved, nil
+}
+
+// ImportResult counts what an import added and what it left out because the ledger already had it.
+type ImportResult struct {
+	Created    int `json:"created"`
+	Duplicates int `json:"duplicates"`
+}
+
+type entryKey struct {
+	day, kind, category, note string
+	amount                    int64
+}
+
+// ImportEntries adds many entries in one transaction, leaving out rows the ledger already holds.
+// A row counts as held when an entry has the same day, type, category, amount and note; matching
+// is one for one, so a file with two identical rows against one stored entry adds one.
+// Args: ctx, entries (validated by the caller, at most MaxImportRows), actor (who is importing),
+// dryRun (count only and write nothing)
+// Returns: the counts; ErrInvalid when a category is unknown or of the other kind, or a payer is not a member
+// Handles: two imports at once (serialised by a transaction lock), a failure part way (nothing is kept)
+func (s *Store) ImportEntries(ctx context.Context, entries []Entry, actor uuid.UUID, dryRun bool) (ImportResult, error) {
+	var result ImportResult
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7340102)"); err != nil {
+			return fmt.Errorf("lock import: %w", err)
+		}
+
+		categoryIDs := make([]string, 0, len(entries))
+		seen := map[uuid.UUID]bool{}
+		days, kinds, categories, notes := make([]string, len(entries)), make([]string, len(entries)), make([]string, len(entries)), make([]string, len(entries))
+		amounts := make([]int64, len(entries))
+		for index, entry := range entries {
+			if !seen[entry.CategoryID] {
+				seen[entry.CategoryID] = true
+				categoryIDs = append(categoryIDs, entry.CategoryID.String())
+			}
+			days[index], kinds[index], categories[index], notes[index], amounts[index] = entry.OccurredOn, entry.Type, entry.CategoryID.String(), entry.Note, entry.AmountMinor
+		}
+
+		rows, err := tx.Query(ctx, "SELECT id::text, kind FROM home_categories WHERE id = ANY($1::uuid[]) LIMIT $2", categoryIDs, len(categoryIDs))
+		if err != nil {
+			return fmt.Errorf("read import categories: %w", err)
+		}
+		categoryKinds := map[string]string{}
+		var id, kind string
+		if _, err := pgx.ForEachRow(rows, []any{&id, &kind}, func() error {
+			categoryKinds[id] = kind
+			return nil
+		}); err != nil {
+			return fmt.Errorf("scan import categories: %w", err)
+		}
+		for _, entry := range entries {
+			if categoryKinds[entry.CategoryID.String()] != entry.Type {
+				return ErrInvalid
+			}
+		}
+
+		rows, err = tx.Query(ctx, "SELECT to_char(e.occurred_on, 'YYYY-MM-DD'), e.type, e.category_id::text, e.amount_minor, e.note, count(*) FROM home_entries e JOIN (SELECT DISTINCT day, kind, category_id, amount_minor, note FROM unnest($1::date[], $2::text[], $3::uuid[], $4::bigint[], $5::text[]) AS k(day, kind, category_id, amount_minor, note)) k ON e.occurred_on = k.day AND e.type = k.kind AND e.category_id = k.category_id AND e.amount_minor = k.amount_minor AND e.note = k.note GROUP BY e.occurred_on, e.type, e.category_id, e.amount_minor, e.note LIMIT $6", days, kinds, categories, amounts, notes, len(entries))
+		if err != nil {
+			return fmt.Errorf("match existing entries: %w", err)
+		}
+		held := map[entryKey]int{}
+		var key entryKey
+		var count int
+		if _, err := pgx.ForEachRow(rows, []any{&key.day, &key.kind, &key.category, &key.amount, &key.note, &count}, func() error {
+			held[key] = count
+			return nil
+		}); err != nil {
+			return fmt.Errorf("scan existing entries: %w", err)
+		}
+
+		var ids, newDays, newKinds, newCategories, newNotes, payers []string
+		var shared []bool
+		var newAmounts []int64
+		for index, entry := range entries {
+			key := entryKey{day: days[index], kind: kinds[index], category: categories[index], note: notes[index], amount: amounts[index]}
+			if held[key] > 0 {
+				held[key]--
+				result.Duplicates++
+				continue
+			}
+			payer := ""
+			if entry.PaidBy != nil {
+				payer = entry.PaidBy.String()
+			}
+			ids = append(ids, uuid.NewString())
+			newDays, newKinds, newCategories, newNotes = append(newDays, key.day), append(newKinds, key.kind), append(newCategories, key.category), append(newNotes, key.note)
+			newAmounts, shared, payers = append(newAmounts, key.amount), append(shared, entry.IsShared), append(payers, payer)
+		}
+		result.Created = len(ids)
+		if dryRun || len(ids) == 0 {
+			return nil
+		}
+
+		_, err = tx.Exec(ctx, "INSERT INTO home_entries (id, occurred_on, type, amount_minor, category_id, note, is_shared, paid_by, created_by) SELECT id, day, kind, amount_minor, category_id, note, is_shared, NULLIF(payer, '')::uuid, $9 FROM unnest($1::uuid[], $2::date[], $3::text[], $4::bigint[], $5::uuid[], $6::text[], $7::boolean[], $8::text[]) AS r(id, day, kind, amount_minor, category_id, note, is_shared, payer)", ids, newDays, newKinds, newAmounts, newCategories, newNotes, shared, payers, actor)
+		if isCode(err, "23503") {
+			return ErrInvalid
+		}
+		if err != nil {
+			return fmt.Errorf("insert imported entries: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return result, nil
 }
 
 // RemoveEntry takes one entry out of the ledger.
