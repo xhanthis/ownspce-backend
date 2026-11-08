@@ -1,0 +1,3142 @@
+[
+ {
+  "name": "Veg Biryani",
+  "kcal": 520,
+  "proteinG": 15,
+  "carbsG": 78,
+  "fatG": 17,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Basmati rice",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Basmati+rice"
+   },
+   {
+    "name": "Mixed vegetables",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Onion",
+    "qty": "3 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Curd",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Ghee",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Biryani masala",
+    "qty": "8 g",
+    "link": "https://www.zeptonow.com/search?query=Biryani+masala"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   }
+  ]
+ },
+ {
+  "name": "Flower Bhaji plate",
+  "kcal": 390,
+  "proteinG": 13,
+  "carbsG": 55,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Cauliflower",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Cauliflower"
+   },
+   {
+    "name": "Potato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Pav Bhaji",
+  "kcal": 490,
+  "proteinG": 12,
+  "carbsG": 70,
+  "fatG": 17,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Potato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Mixed vegetables",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Tomato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Butter",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Butter"
+   },
+   {
+    "name": "Pav bhaji masala",
+    "qty": "8 g",
+    "link": "https://www.zeptonow.com/search?query=Pav+bhaji+masala"
+   },
+   {
+    "name": "Pav",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Pav"
+   }
+  ]
+ },
+ {
+  "name": "Matki Usal plate",
+  "kcal": 460,
+  "proteinG": 20,
+  "carbsG": 69,
+  "fatG": 12,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Matki (moth beans)",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Matki+%28moth+beans%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Palak Paratha",
+  "kcal": 445,
+  "proteinG": 14,
+  "carbsG": 58,
+  "fatG": 18,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Paneer Butter Masala plate",
+  "kcal": 590,
+  "proteinG": 22,
+  "carbsG": 55,
+  "fatG": 32,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Paneer",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Paneer"
+   },
+   {
+    "name": "Tomato",
+    "qty": "3 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Butter",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Butter"
+   },
+   {
+    "name": "Fresh cream",
+    "qty": "30 ml",
+    "link": "https://www.zeptonow.com/search?query=Fresh+cream"
+   },
+   {
+    "name": "Cashews",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Cashews"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Kobi Bhaji plate",
+  "kcal": 380,
+  "proteinG": 13,
+  "carbsG": 53,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Cabbage",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Cabbage"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "40 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Chana dal",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Chana+dal"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Bhendi Fry plate",
+  "kcal": 400,
+  "proteinG": 12,
+  "carbsG": 53,
+  "fatG": 16,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Bhendi (okra)",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Bhendi+%28okra%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Varan Bhat",
+  "kcal": 525,
+  "proteinG": 16,
+  "carbsG": 95,
+  "fatG": 8,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "180 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Toor dal",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Turmeric",
+    "qty": "2 g",
+    "link": "https://www.zeptonow.com/search?query=Turmeric"
+   },
+   {
+    "name": "Ghee",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Papad",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Papad"
+   }
+  ]
+ },
+ {
+  "name": "Tondli Bhaji plate",
+  "kcal": 380,
+  "proteinG": 12,
+  "carbsG": 53,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Tondli (ivy gourd)",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Tondli+%28ivy+gourd%29"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "40 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Dosa",
+  "kcal": 450,
+  "proteinG": 12,
+  "carbsG": 65,
+  "fatG": 16,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Dosa batter",
+    "qty": "400 g",
+    "link": "https://www.zeptonow.com/search?query=Dosa+batter"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Toor dal",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Sambar masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Sambar+masala"
+   },
+   {
+    "name": "Drumstick",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Drumstick"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Tamarind",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind"
+   },
+   {
+    "name": "Coconut",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Roasted chana dal",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Roasted+chana+dal"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   }
+  ]
+ },
+ {
+  "name": "Mixed Veg plate",
+  "kcal": 400,
+  "proteinG": 13,
+  "carbsG": 57,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Mixed vegetables",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Chhole Puri",
+  "kcal": 580,
+  "proteinG": 18,
+  "carbsG": 75,
+  "fatG": 24,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Chana (kabuli)",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Chana+%28kabuli%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "3 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "50 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Chhole masala",
+    "qty": "8 g",
+    "link": "https://www.zeptonow.com/search?query=Chhole+masala"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Hirve Moong Usal plate",
+  "kcal": 450,
+  "proteinG": 21,
+  "carbsG": 69,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Green moong",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Green+moong"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Coconut",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Oil",
+    "qty": "10 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Methi Paratha",
+  "kcal": 445,
+  "proteinG": 14,
+  "carbsG": 58,
+  "fatG": 18,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Batata Bhaji plate",
+  "kcal": 470,
+  "proteinG": 13,
+  "carbsG": 75,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Potato",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Curry leaves",
+    "qty": "2 g",
+    "link": "https://www.zeptonow.com/search?query=Curry+leaves"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Uttappa",
+  "kcal": 530,
+  "proteinG": 14,
+  "carbsG": 73,
+  "fatG": 20,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Dosa batter",
+    "qty": "440 g",
+    "link": "https://www.zeptonow.com/search?query=Dosa+batter"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "3 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Toor dal",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Sambar masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Sambar+masala"
+   },
+   {
+    "name": "Drumstick",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Drumstick"
+   },
+   {
+    "name": "Tamarind",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind"
+   },
+   {
+    "name": "Coconut",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Roasted chana dal",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Roasted+chana+dal"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   }
+  ]
+ },
+ {
+  "name": "Gawar Bhaji plate",
+  "kcal": 410,
+  "proteinG": 14,
+  "carbsG": 55,
+  "fatG": 15,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Gawar (cluster beans)",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Gawar+%28cluster+beans%29"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Kofta Curry plate",
+  "kcal": 570,
+  "proteinG": 18,
+  "carbsG": 65,
+  "fatG": 26,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Lauki (dudhi)",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Lauki+%28dudhi%29"
+   },
+   {
+    "name": "Besan",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "30 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Cashews",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Cashews"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Farasbi Bhaji plate",
+  "kcal": 380,
+  "proteinG": 13,
+  "carbsG": 54,
+  "fatG": 13,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "French beans",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=French+beans"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "40 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Misal Pav",
+  "kcal": 670,
+  "proteinG": 20,
+  "carbsG": 93,
+  "fatG": 24,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Matki (moth beans)",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Matki+%28moth+beans%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Misal masala",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Misal+masala"
+   },
+   {
+    "name": "Oil",
+    "qty": "25 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   },
+   {
+    "name": "Farsan",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Farsan"
+   },
+   {
+    "name": "Pav",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Pav"
+   }
+  ]
+ },
+ {
+  "name": "Sev Bhaji plate",
+  "kcal": 510,
+  "proteinG": 16,
+  "carbsG": 63,
+  "fatG": 22,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Sev",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Sev"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Coconut",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Sev Tomato plate",
+  "kcal": 490,
+  "proteinG": 15,
+  "carbsG": 63,
+  "fatG": 21,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Sev",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Sev"
+   },
+   {
+    "name": "Tomato",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Kadhi Pakora Bhat",
+  "kcal": 460,
+  "proteinG": 12,
+  "carbsG": 68,
+  "fatG": 15,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Besan",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Rice",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   }
+  ]
+ },
+ {
+  "name": "Kanda Pohe",
+  "kcal": 280,
+  "proteinG": 6,
+  "carbsG": 45,
+  "fatG": 9,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Poha",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Poha"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "30 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Dadpe Pohe",
+  "kcal": 220,
+  "proteinG": 5,
+  "carbsG": 36,
+  "fatG": 7,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Poha (thin)",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Poha+%28thin%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Coconut",
+    "qty": "30 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Oil",
+    "qty": "10 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   }
+  ]
+ },
+ {
+  "name": "Upma",
+  "kcal": 260,
+  "proteinG": 6,
+  "carbsG": 42,
+  "fatG": 8,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rava",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rava"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Sabudana Khichdi",
+  "kcal": 420,
+  "proteinG": 7,
+  "carbsG": 70,
+  "fatG": 13,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Sabudana",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Sabudana"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Potato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Ghee",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   }
+  ]
+ },
+ {
+  "name": "Thalipeeth",
+  "kcal": 460,
+  "proteinG": 14,
+  "carbsG": 60,
+  "fatG": 18,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Bhajani flour",
+    "qty": "240 g",
+    "link": "https://www.zeptonow.com/search?query=Bhajani+flour"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Butter",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Butter"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Idli Sambar",
+  "kcal": 370,
+  "proteinG": 12,
+  "carbsG": 57,
+  "fatG": 10,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Idli batter",
+    "qty": "360 g",
+    "link": "https://www.zeptonow.com/search?query=Idli+batter"
+   },
+   {
+    "name": "Toor dal",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Sambar masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Sambar+masala"
+   },
+   {
+    "name": "Drumstick",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Drumstick"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Tamarind",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind"
+   },
+   {
+    "name": "Coconut",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Roasted chana dal",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Roasted+chana+dal"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   }
+  ]
+ },
+ {
+  "name": "Moong Dal Chilla",
+  "kcal": 330,
+  "proteinG": 15,
+  "carbsG": 35,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Moong dal (yellow)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Moong+dal+%28yellow%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Coconut",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Roasted chana dal",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Roasted+chana+dal"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   }
+  ]
+ },
+ {
+  "name": "Methi Thepla",
+  "kcal": 365,
+  "proteinG": 12,
+  "carbsG": 48,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Sheera",
+  "kcal": 300,
+  "proteinG": 4,
+  "carbsG": 42,
+  "fatG": 13,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rava",
+    "qty": "80 g",
+    "link": "https://www.zeptonow.com/search?query=Rava"
+   },
+   {
+    "name": "Sugar",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Sugar"
+   },
+   {
+    "name": "Ghee",
+    "qty": "25 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Milk",
+    "qty": "100 ml",
+    "link": "https://www.zeptonow.com/search?query=Milk"
+   }
+  ]
+ },
+ {
+  "name": "Ghavan",
+  "kcal": 280,
+  "proteinG": 6,
+  "carbsG": 42,
+  "fatG": 10,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice flour",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rice+flour"
+   },
+   {
+    "name": "Oil",
+    "qty": "9 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Coconut",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Roasted chana dal",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Roasted+chana+dal"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   }
+  ]
+ },
+ {
+  "name": "Masala Oats",
+  "kcal": 250,
+  "proteinG": 8,
+  "carbsG": 38,
+  "fatG": 7,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Oats",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Oats"
+   },
+   {
+    "name": "Mixed vegetables",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Oil",
+    "qty": "10 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   }
+  ]
+ },
+ {
+  "name": "Oats with Milk",
+  "kcal": 300,
+  "proteinG": 11,
+  "carbsG": 44,
+  "fatG": 8,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Oats",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Oats"
+   },
+   {
+    "name": "Milk",
+    "qty": "400 ml",
+    "link": "https://www.zeptonow.com/search?query=Milk"
+   },
+   {
+    "name": "Banana",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Banana"
+   }
+  ]
+ },
+ {
+  "name": "Pithla Bhakri",
+  "kcal": 430,
+  "proteinG": 16,
+  "carbsG": 70,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Besan",
+    "qty": "90 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Garlic",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Garlic"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Jowar flour",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Jowar+flour"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Zunka Bhakri",
+  "kcal": 450,
+  "proteinG": 16,
+  "carbsG": 70,
+  "fatG": 13,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Besan",
+    "qty": "90 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Onion",
+    "qty": "3 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Garlic",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Garlic"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Jowar flour",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Jowar+flour"
+   },
+   {
+    "name": "Green chilli",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Green+chilli"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Bharli Vangi plate",
+  "kcal": 470,
+  "proteinG": 15,
+  "carbsG": 57,
+  "fatG": 21,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Brinjal (small)",
+    "qty": "8 pcs",
+    "link": "https://www.zeptonow.com/search?query=Brinjal+%28small%29"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Coconut",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Vangyache Bharit Bhakri",
+  "kcal": 370,
+  "proteinG": 10,
+  "carbsG": 60,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Brinjal (bharta)",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Brinjal+%28bharta%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Spring onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Spring+onion"
+   },
+   {
+    "name": "Jowar flour",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Jowar+flour"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Masale Bhat",
+  "kcal": 495,
+  "proteinG": 12,
+  "carbsG": 76,
+  "fatG": 16,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "170 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Tondli (ivy gourd)",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Tondli+%28ivy+gourd%29"
+   },
+   {
+    "name": "Green peas",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Green+peas"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Ghee",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Curd",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Amti Bhat",
+  "kcal": 500,
+  "proteinG": 16,
+  "carbsG": 97,
+  "fatG": 6,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "180 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Toor dal",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Jaggery",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Jaggery"
+   },
+   {
+    "name": "Tamarind",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind"
+   },
+   {
+    "name": "Papad",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Papad"
+   }
+  ]
+ },
+ {
+  "name": "Dal Khichdi",
+  "kcal": 455,
+  "proteinG": 18,
+  "carbsG": 72,
+  "fatG": 10,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Moong dal (yellow)",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Moong+dal+%28yellow%29"
+   },
+   {
+    "name": "Ghee",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Papad",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Papad"
+   }
+  ]
+ },
+ {
+  "name": "Methi Bhaji plate",
+  "kcal": 390,
+  "proteinG": 14,
+  "carbsG": 53,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Methi (fenugreek leaves)",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Methi+%28fenugreek+leaves%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Garlic",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Garlic"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Vatana Usal plate",
+  "kcal": 440,
+  "proteinG": 18,
+  "carbsG": 69,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Dried green peas",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Dried+green+peas"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Oil",
+    "qty": "10 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Chavali Usal plate",
+  "kcal": 450,
+  "proteinG": 19,
+  "carbsG": 69,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Chavali (black-eyed beans)",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Chavali+%28black-eyed+beans%29"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Oil",
+    "qty": "10 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Palak Paneer plate",
+  "kcal": 530,
+  "proteinG": 22,
+  "carbsG": 53,
+  "fatG": 26,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Palak (spinach)",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Palak+%28spinach%29"
+   },
+   {
+    "name": "Paneer",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Paneer"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Fresh cream",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Fresh+cream"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Paneer Bhurji plate",
+  "kcal": 550,
+  "proteinG": 24,
+  "carbsG": 51,
+  "fatG": 29,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Paneer",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Paneer"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Capsicum",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Capsicum"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Veg Pulao Raita",
+  "kcal": 480,
+  "proteinG": 13,
+  "carbsG": 74,
+  "fatG": 14,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Basmati rice",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Basmati+rice"
+   },
+   {
+    "name": "Mixed vegetables",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Ghee",
+    "qty": "15 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Curd",
+    "qty": "240 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   }
+  ]
+ },
+ {
+  "name": "Rajma Chawal",
+  "kcal": 450,
+  "proteinG": 16,
+  "carbsG": 82,
+  "fatG": 6,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rajma",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rajma"
+   },
+   {
+    "name": "Onion",
+    "qty": "3 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Rice",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Dal Tadka Jeera Rice",
+  "kcal": 420,
+  "proteinG": 14,
+  "carbsG": 73,
+  "fatG": 8,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Toor dal",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Ghee",
+    "qty": "15 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Garlic",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Garlic"
+   },
+   {
+    "name": "Rice",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Papad",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Papad"
+   }
+  ]
+ },
+ {
+  "name": "Dudhi Bhaji plate",
+  "kcal": 360,
+  "proteinG": 12,
+  "carbsG": 53,
+  "fatG": 12,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Lauki (dudhi)",
+    "qty": "400 g",
+    "link": "https://www.zeptonow.com/search?query=Lauki+%28dudhi%29"
+   },
+   {
+    "name": "Moong dal (yellow)",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Moong+dal+%28yellow%29"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Veg Kolhapuri plate",
+  "kcal": 470,
+  "proteinG": 15,
+  "carbsG": 59,
+  "fatG": 20,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Mixed vegetables",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Onion",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Coconut",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Kolhapuri masala",
+    "qty": "8 g",
+    "link": "https://www.zeptonow.com/search?query=Kolhapuri+masala"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Aloo Matar plate",
+  "kcal": 440,
+  "proteinG": 15,
+  "carbsG": 67,
+  "fatG": 13,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Potato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Green peas",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Green+peas"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Oil",
+    "qty": "15 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Puran Poli",
+  "kcal": 495,
+  "proteinG": 12,
+  "carbsG": 74,
+  "fatG": 16,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Chana dal",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Chana+dal"
+   },
+   {
+    "name": "Jaggery",
+    "qty": "80 g",
+    "link": "https://www.zeptonow.com/search?query=Jaggery"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "80 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Oil",
+    "qty": "10 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Ghee",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Goda masala",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Goda+masala"
+   },
+   {
+    "name": "Coconut",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Tamarind",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind"
+   }
+  ]
+ },
+ {
+  "name": "Moong Dal Khichdi",
+  "kcal": 395,
+  "proteinG": 16,
+  "carbsG": 62,
+  "fatG": 8,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Moong dal (yellow)",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Moong+dal+%28yellow%29"
+   },
+   {
+    "name": "Ghee",
+    "qty": "8 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Tomato Saar Bhat",
+  "kcal": 280,
+  "proteinG": 6,
+  "carbsG": 54,
+  "fatG": 5,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Tomato",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Coconut",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Coconut"
+   },
+   {
+    "name": "Ghee",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   },
+   {
+    "name": "Jaggery",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Jaggery"
+   },
+   {
+    "name": "Rice",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   }
+  ]
+ },
+ {
+  "name": "Varan Poli",
+  "kcal": 342,
+  "proteinG": 14,
+  "carbsG": 58,
+  "fatG": 6,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Toor dal",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Turmeric",
+    "qty": "2 g",
+    "link": "https://www.zeptonow.com/search?query=Turmeric"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "140 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Ghee",
+    "qty": "5 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   }
+  ]
+ },
+ {
+  "name": "Dahi Bhat",
+  "kcal": 280,
+  "proteinG": 7,
+  "carbsG": 50,
+  "fatG": 5,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Curd",
+    "qty": "240 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Oil",
+    "qty": "6 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Curry leaves",
+    "qty": "2 g",
+    "link": "https://www.zeptonow.com/search?query=Curry+leaves"
+   }
+  ]
+ },
+ {
+  "name": "Vegetable Soup and Poli",
+  "kcal": 210,
+  "proteinG": 7,
+  "carbsG": 36,
+  "fatG": 4,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Mixed vegetables",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+vegetables"
+   },
+   {
+    "name": "Garlic",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Garlic"
+   },
+   {
+    "name": "Butter",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Butter"
+   },
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   }
+  ]
+ },
+ {
+  "name": "Sabudana Vada",
+  "kcal": 365,
+  "proteinG": 10,
+  "carbsG": 44,
+  "fatG": 18,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Sabudana",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Sabudana"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "40 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Potato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Oil",
+    "qty": "25 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Chai",
+  "kcal": 90,
+  "proteinG": 3,
+  "carbsG": 12,
+  "fatG": 3,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Milk",
+    "qty": "200 ml",
+    "link": "https://www.zeptonow.com/search?query=Milk"
+   },
+   {
+    "name": "Tea powder",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Tea+powder"
+   },
+   {
+    "name": "Sugar",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Sugar"
+   }
+  ]
+ },
+ {
+  "name": "Chai and Biscuits",
+  "kcal": 150,
+  "proteinG": 4,
+  "carbsG": 22,
+  "fatG": 5,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Milk",
+    "qty": "200 ml",
+    "link": "https://www.zeptonow.com/search?query=Milk"
+   },
+   {
+    "name": "Tea powder",
+    "qty": "6 g",
+    "link": "https://www.zeptonow.com/search?query=Tea+powder"
+   },
+   {
+    "name": "Sugar",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Sugar"
+   },
+   {
+    "name": "Marie biscuits",
+    "qty": "4 pcs",
+    "link": "https://www.zeptonow.com/search?query=Marie+biscuits"
+   }
+  ]
+ },
+ {
+  "name": "Coffee",
+  "kcal": 100,
+  "proteinG": 4,
+  "carbsG": 12,
+  "fatG": 4,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Milk",
+    "qty": "240 ml",
+    "link": "https://www.zeptonow.com/search?query=Milk"
+   },
+   {
+    "name": "Coffee powder",
+    "qty": "4 g",
+    "link": "https://www.zeptonow.com/search?query=Coffee+powder"
+   },
+   {
+    "name": "Sugar",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Sugar"
+   }
+  ]
+ },
+ {
+  "name": "Fruit Bowl",
+  "kcal": 100,
+  "proteinG": 1,
+  "carbsG": 25,
+  "fatG": 0,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Seasonal fruit",
+    "qty": "300 g",
+    "link": "https://www.zeptonow.com/search?query=Seasonal+fruit"
+   }
+  ]
+ },
+ {
+  "name": "Peanut Chikki",
+  "kcal": 150,
+  "proteinG": 4,
+  "carbsG": 18,
+  "fatG": 7,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Peanut chikki",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Peanut+chikki"
+   }
+  ]
+ },
+ {
+  "name": "Sprouts Chaat",
+  "kcal": 160,
+  "proteinG": 9,
+  "carbsG": 24,
+  "fatG": 3,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Moong sprouts",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Moong+sprouts"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Lemon",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Lemon"
+   }
+  ]
+ },
+ {
+  "name": "Roasted Makhana",
+  "kcal": 110,
+  "proteinG": 3,
+  "carbsG": 20,
+  "fatG": 2,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Makhana",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Makhana"
+   },
+   {
+    "name": "Ghee",
+    "qty": "4 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   }
+  ]
+ },
+ {
+  "name": "Bhel",
+  "kcal": 250,
+  "proteinG": 5,
+  "carbsG": 42,
+  "fatG": 7,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Puffed rice (murmura)",
+    "qty": "100 g",
+    "link": "https://www.zeptonow.com/search?query=Puffed+rice+%28murmura%29"
+   },
+   {
+    "name": "Sev",
+    "qty": "30 g",
+    "link": "https://www.zeptonow.com/search?query=Sev"
+   },
+   {
+    "name": "Onion",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Onion"
+   },
+   {
+    "name": "Tomato",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Tomato"
+   },
+   {
+    "name": "Tamarind chutney",
+    "qty": "40 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind+chutney"
+   }
+  ]
+ },
+ {
+  "name": "Vada Pav",
+  "kcal": 290,
+  "proteinG": 7,
+  "carbsG": 45,
+  "fatG": 10,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Potato",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Potato"
+   },
+   {
+    "name": "Besan",
+    "qty": "50 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   },
+   {
+    "name": "Pav",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Pav"
+   }
+  ]
+ },
+ {
+  "name": "Bakarwadi",
+  "kcal": 200,
+  "proteinG": 4,
+  "carbsG": 22,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Bakarwadi",
+    "qty": "80 g",
+    "link": "https://www.zeptonow.com/search?query=Bakarwadi"
+   }
+  ]
+ },
+ {
+  "name": "Chakli",
+  "kcal": 140,
+  "proteinG": 2,
+  "carbsG": 16,
+  "fatG": 8,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Chakli",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Chakli"
+   }
+  ]
+ },
+ {
+  "name": "Dry Fruits",
+  "kcal": 170,
+  "proteinG": 5,
+  "carbsG": 10,
+  "fatG": 13,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Mixed dry fruits",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Mixed+dry+fruits"
+   }
+  ]
+ },
+ {
+  "name": "Kothimbir Vadi",
+  "kcal": 220,
+  "proteinG": 7,
+  "carbsG": 24,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Coriander",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Coriander"
+   },
+   {
+    "name": "Besan",
+    "qty": "90 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   }
+  ]
+ },
+ {
+  "name": "Alu Vadi",
+  "kcal": 210,
+  "proteinG": 5,
+  "carbsG": 24,
+  "fatG": 11,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Alu leaves (colocasia)",
+    "qty": "6 pcs",
+    "link": "https://www.zeptonow.com/search?query=Alu+leaves+%28colocasia%29"
+   },
+   {
+    "name": "Besan",
+    "qty": "80 g",
+    "link": "https://www.zeptonow.com/search?query=Besan"
+   },
+   {
+    "name": "Tamarind",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Tamarind"
+   },
+   {
+    "name": "Jaggery",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Jaggery"
+   },
+   {
+    "name": "Oil",
+    "qty": "20 ml",
+    "link": "https://www.zeptonow.com/search?query=Oil"
+   }
+  ]
+ },
+ {
+  "name": "Poli",
+  "kcal": 90,
+  "proteinG": 3,
+  "carbsG": 18,
+  "fatG": 1,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   }
+  ]
+ },
+ {
+  "name": "Poli with Ghee",
+  "kcal": 112,
+  "proteinG": 3,
+  "carbsG": 18,
+  "fatG": 4,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Wheat flour (atta)",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Wheat+flour+%28atta%29"
+   },
+   {
+    "name": "Ghee",
+    "qty": "5 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   }
+  ]
+ },
+ {
+  "name": "Jowar Bhakri",
+  "kcal": 200,
+  "proteinG": 6,
+  "carbsG": 42,
+  "fatG": 2,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Jowar flour",
+    "qty": "120 g",
+    "link": "https://www.zeptonow.com/search?query=Jowar+flour"
+   }
+  ]
+ },
+ {
+  "name": "Rice (½ katori)",
+  "kcal": 100,
+  "proteinG": 2,
+  "carbsG": 22,
+  "fatG": 0,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   }
+  ]
+ },
+ {
+  "name": "Varan (1 katori)",
+  "kcal": 140,
+  "proteinG": 8,
+  "carbsG": 22,
+  "fatG": 2,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Toor dal",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Turmeric",
+    "qty": "2 g",
+    "link": "https://www.zeptonow.com/search?query=Turmeric"
+   }
+  ]
+ },
+ {
+  "name": "Varan Bhat (small)",
+  "kcal": 240,
+  "proteinG": 10,
+  "carbsG": 44,
+  "fatG": 2,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Rice",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Rice"
+   },
+   {
+    "name": "Toor dal",
+    "qty": "70 g",
+    "link": "https://www.zeptonow.com/search?query=Toor+dal"
+   },
+   {
+    "name": "Turmeric",
+    "qty": "2 g",
+    "link": "https://www.zeptonow.com/search?query=Turmeric"
+   }
+  ]
+ },
+ {
+  "name": "Koshimbir",
+  "kcal": 70,
+  "proteinG": 3,
+  "carbsG": 5,
+  "fatG": 4,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Cucumber",
+    "qty": "1 pcs",
+    "link": "https://www.zeptonow.com/search?query=Cucumber"
+   },
+   {
+    "name": "Curd",
+    "qty": "60 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   },
+   {
+    "name": "Peanuts",
+    "qty": "20 g",
+    "link": "https://www.zeptonow.com/search?query=Peanuts"
+   }
+  ]
+ },
+ {
+  "name": "Curd (100 g)",
+  "kcal": 65,
+  "proteinG": 4,
+  "carbsG": 4,
+  "fatG": 4,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Curd",
+    "qty": "200 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Taak",
+  "kcal": 45,
+  "proteinG": 2,
+  "carbsG": 4,
+  "fatG": 2,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Curd",
+    "qty": "160 g",
+    "link": "https://www.zeptonow.com/search?query=Curd"
+   }
+  ]
+ },
+ {
+  "name": "Papad",
+  "kcal": 40,
+  "proteinG": 2,
+  "carbsG": 7,
+  "fatG": 0,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Papad",
+    "qty": "2 pcs",
+    "link": "https://www.zeptonow.com/search?query=Papad"
+   }
+  ]
+ },
+ {
+  "name": "Ghee (1 tsp)",
+  "kcal": 45,
+  "proteinG": 0,
+  "carbsG": 0,
+  "fatG": 5,
+  "serves": 2,
+  "ingredients": [
+   {
+    "name": "Ghee",
+    "qty": "10 g",
+    "link": "https://www.zeptonow.com/search?query=Ghee"
+   }
+  ]
+ }
+]
