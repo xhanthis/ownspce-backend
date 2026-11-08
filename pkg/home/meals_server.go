@@ -202,14 +202,25 @@ func (s *Server) removeMeal(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// tickMeal marks a meal as eaten by the signed-in member (PUT) or clears that mark (DELETE).
+// tickMeal marks a meal as eaten by the signed-in member (PUT) or clears that mark (DELETE). The first tick takes
+// the recipe's ingredients out of stock; clearing the last tick puts them back.
 func (s *Server) tickMeal(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, r, errNotFound)
 		return
 	}
-	if err := s.store.TickMeal(r.Context(), id, actor(r).ID, r.Method == http.MethodPut); err != nil {
+	ate := r.Method == http.MethodPut
+	if err := s.store.TickMeal(r.Context(), id, actor(r).ID, ate); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if ate {
+		_, err = s.store.CookMeal(r.Context(), id, actor(r).ID)
+	} else {
+		err = s.store.UncookMeal(r.Context(), id)
+	}
+	if err != nil {
 		writeError(w, r, err)
 		return
 	}

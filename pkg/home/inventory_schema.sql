@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS home_inventory_items (id uuid PRIMARY KEY, name text NOT NULL, name_key text NOT NULL UNIQUE, unit text NOT NULL CHECK (unit IN ('g', 'ml', 'pcs')), qty numeric(12, 2) NOT NULL DEFAULT 0 CHECK (qty >= 0), created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE IF NOT EXISTS home_inventory_moves (id uuid PRIMARY KEY, item_id uuid NOT NULL REFERENCES home_inventory_items(id) ON DELETE CASCADE, delta numeric(12, 2) NOT NULL, reason text NOT NULL CHECK (reason IN ('bought', 'cooked', 'adjusted', 'scanned')), meal_id uuid REFERENCES home_meals(id) ON DELETE SET NULL, ingredient_index integer, note text NOT NULL DEFAULT '', created_by uuid REFERENCES home_users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS home_inventory_moves_recent_idx ON home_inventory_moves (created_at DESC, id);
+CREATE INDEX IF NOT EXISTS home_inventory_moves_meal_idx ON home_inventory_moves (meal_id) WHERE meal_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS home_inventory_moves_bought_line_idx ON home_inventory_moves (meal_id, ingredient_index) WHERE reason = 'bought' AND meal_id IS NOT NULL;

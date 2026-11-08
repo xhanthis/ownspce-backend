@@ -75,6 +75,7 @@ HOME_DATABASE_URL=postgres://… go run ./cmd/home                       # serve
 HOME_DATABASE_URL=postgres://… go run ./cmd/home adduser <user> "<Name>"  # password read from stdin
 HOME_DATABASE_URL=postgres://… go run ./cmd/home passwd <user>            # replace it; signs that account out
 HOME_TEST_DATABASE_URL=postgres://… go test ./pkg/home                    # skips when unset
+HOME_VISION_KEY=…                                                          # Claude key for the inventory photo scan; unset turns that route off
 ```
 
 Passwords are bcrypt; sessions are 90-day bearer tokens of which only the SHA-256 is stored; failed sign-ins are throttled to 10 per username per 15 minutes. Every account can read and edit the whole ledger.
