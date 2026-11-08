@@ -24,7 +24,7 @@ const (
 	maxLinkLength      = 500
 )
 
-var mealSlots = set("breakfast", "lunch", "snack", "dinner")
+var mealSlots = set("breakfast", "lunch", "snack", "dinner", "late")
 
 type ingredientBody struct {
 	Name string `json:"name"`
@@ -56,7 +56,7 @@ func (b mealBody) validate() (Meal, error) {
 	case !validDate(b.Day):
 		return Meal{}, badRequest("day must be a yyyy-mm-dd date")
 	case !mealSlots[b.Slot]:
-		return Meal{}, badRequest("slot must be breakfast, lunch, snack or dinner")
+		return Meal{}, badRequest("slot must be breakfast, lunch, snack, dinner or late")
 	case !textBetween(name, 1, 120):
 		return Meal{}, badRequest("name must be 1 to 120 characters")
 	case b.Kcal < 0 || b.Kcal > maxKcal:

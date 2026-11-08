@@ -103,7 +103,7 @@ func timeoutByPath(next http.Handler) http.Handler {
 	short := middleware.Timeout(requestTimeout)(next)
 	long := middleware.Timeout(scanTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == dishEstimatePath || isProofPath(r.URL.Path) {
+		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == receiptScanPath || r.URL.Path == dishEstimatePath || isProofPath(r.URL.Path) {
 			long.ServeHTTP(w, r)
 			return
 		}
@@ -165,7 +165,7 @@ func newServer(store *Store, config Config, vision *Vision) http.Handler {
 			if r.URL.Path == mealImportPath {
 				limit = maxMealImportBytes
 			}
-			if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath {
+			if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == receiptScanPath {
 				limit = maxScanBytes
 			}
 			if isProofPath(r.URL.Path) {
@@ -191,6 +191,7 @@ func newServer(store *Store, config Config, vision *Vision) http.Handler {
 			authed.Patch("/settings", server.updateSettings)
 			authed.Get("/entries", server.listEntries)
 			authed.Post("/entries", server.createEntry)
+			authed.Post("/entries/scan", server.scanReceipt)
 			authed.Post("/entries/import", server.importEntries)
 			authed.Put("/entries/{id}", server.replaceEntry)
 			authed.Delete("/entries/{id}", server.removeEntry)
