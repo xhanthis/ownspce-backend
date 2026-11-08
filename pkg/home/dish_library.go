@@ -57,9 +57,20 @@ func defaultDishes() ([]Meal, error) {
 // menu import or an earlier seed, is left exactly as it is, so edits made in the app survive every restart.
 // Seeded rows carry no owner, zero uses and an old last-used date, so dishes the household has really cooked
 // stay ahead of them in the dropdown.
+// Open runs it whenever the build's schema fingerprint changes, so a normal cold start never touches it.
 // Returns: how many dishes were added this time
 // Handles: two instances starting together (ON CONFLICT DO NOTHING), a bad library file (refused whole, nothing written)
 func (s *Store) SeedDishes(ctx context.Context) (int, error) {
+	added := 0
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var err error
+		added, err = seedDishes(ctx, tx)
+		return err
+	})
+	return added, err
+}
+
+func seedDishes(ctx context.Context, tx pgx.Tx) (int, error) {
 	dishes, err := defaultDishes()
 	if err != nil {
 		return 0, err
@@ -72,21 +83,15 @@ func (s *Store) SeedDishes(ctx context.Context) (int, error) {
 		}
 		batch.Queue("INSERT INTO home_dishes (id, name, name_key, kcal, protein_g, carbs_g, fat_g, serves, ingredients, times_used, last_used_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, 0, '2000-01-01') ON CONFLICT (name_key) DO NOTHING", uuid.New(), strings.Join(strings.Fields(dish.Name), " "), dishKey(dish.Name), dish.Kcal, dish.ProteinG, dish.CarbsG, dish.FatG, dish.Serves, ingredients)
 	}
+	results := tx.SendBatch(ctx, batch)
+	defer results.Close()
 	added := 0
-	err = pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		results := tx.SendBatch(ctx, batch)
-		defer results.Close()
-		for range dishes {
-			tag, err := results.Exec()
-			if err != nil {
-				return fmt.Errorf("seed dishes: %w", err)
-			}
-			added += int(tag.RowsAffected())
+	for range dishes {
+		tag, err := results.Exec()
+		if err != nil {
+			return 0, fmt.Errorf("seed dishes: %w", err)
 		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
+		added += int(tag.RowsAffected())
 	}
 	return added, nil
 }

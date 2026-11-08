@@ -8,7 +8,9 @@ package home
 
 import (
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -44,6 +46,16 @@ const maxMembers = 100
 
 type Store struct {
 	pool *pgxpool.Pool
+
+	// Applied is true when this Open ran the schema and seeds, false when the database already matched.
+	Applied bool
+}
+
+// schemaFingerprint names this build's schema and seed data. The database remembers the last one applied, so a
+// cold start whose fingerprint matches skips every schema statement and both seeds: one read instead of eight.
+func schemaFingerprint() string {
+	sum := sha256.Sum256([]byte(schemaSQL + inventorySchemaSQL + fixedSchemaSQL + string(dishLibraryJSON)))
+	return hex.EncodeToString(sum[:8])
 }
 
 type User struct {
@@ -150,10 +162,11 @@ var seedCategories = []Category{
 	{Name: "Gifts", Emoji: "🧧", Color: "#D46D7F", Kind: "income"},
 }
 
-// Open connects to Postgres, applies the schema and seeds the starter categories once.
+// Open connects to Postgres and brings the schema and seeds up to this build, skipping all of it when the
+// database already carries this build's fingerprint.
 // Args: ctx, databaseURL (a Postgres connection string)
 // Returns: a ready Store, or an error when the database is unreachable or the schema fails
-// Handles: concurrent first boots — the seed runs under a transaction-scoped advisory lock
+// Handles: concurrent first boots — the schema and seeds run under a transaction-scoped advisory lock
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -180,11 +193,47 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 
 func (s *Store) Close() { s.pool.Close() }
 
+// storedFingerprint reads the fingerprint the database last recorded; empty when none is recorded yet or the
+// meta table does not exist (a database older than this mechanism).
+func (s *Store) storedFingerprint(ctx context.Context, db interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}) (string, error) {
+	var stored string
+	err := db.QueryRow(ctx, "SELECT value FROM home_meta WHERE key = 'schema'").Scan(&stored)
+	if errors.Is(err, pgx.ErrNoRows) || isCode(err, "42P01") {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read schema fingerprint: %w", err)
+	}
+	return stored, nil
+}
+
+// migrate applies the schema files and seeds unless the database already records this build's fingerprint.
+// Handles: a database without the fingerprint table yet (first boot of this build) → full run; two instances
+// booting together → the lock serialises them, and the second re-reads the fingerprint under it and does nothing
 func (s *Store) migrate(ctx context.Context) error {
+	fingerprint := schemaFingerprint()
+	stored, err := s.storedFingerprint(ctx, s.pool)
+	if err != nil {
+		return err
+	}
+	if stored == fingerprint {
+		return nil
+	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(7340101)"); err != nil {
 			return fmt.Errorf("lock schema: %w", err)
 		}
+		if _, err := tx.Exec(ctx, "CREATE TABLE IF NOT EXISTS home_meta (key text PRIMARY KEY, value text NOT NULL, updated_at timestamptz NOT NULL DEFAULT now())"); err != nil {
+			return fmt.Errorf("meta table: %w", err)
+		}
+		if stored, err := s.storedFingerprint(ctx, tx); err != nil {
+			return err
+		} else if stored == fingerprint {
+			return nil
+		}
+		s.Applied = true
 		if _, err := tx.Exec(ctx, schemaSQL); err != nil {
 			return fmt.Errorf("apply schema: %w", err)
 		}
@@ -198,15 +247,20 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM home_categories)").Scan(&seeded); err != nil {
 			return fmt.Errorf("check categories: %w", err)
 		}
-		if seeded {
-			return nil
+		if !seeded {
+			batch := &pgx.Batch{}
+			for index, category := range seedCategories {
+				batch.Queue("INSERT INTO home_categories (id, name, emoji, color, kind, sort_order) VALUES ($1, $2, $3, $4, $5, $6)", uuid.New(), category.Name, category.Emoji, category.Color, category.Kind, index)
+			}
+			if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+				return fmt.Errorf("seed categories: %w", err)
+			}
 		}
-		batch := &pgx.Batch{}
-		for index, category := range seedCategories {
-			batch.Queue("INSERT INTO home_categories (id, name, emoji, color, kind, sort_order) VALUES ($1, $2, $3, $4, $5, $6)", uuid.New(), category.Name, category.Emoji, category.Color, category.Kind, index)
+		if _, err := seedDishes(ctx, tx); err != nil {
+			return err
 		}
-		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
-			return fmt.Errorf("seed categories: %w", err)
+		if _, err := tx.Exec(ctx, "INSERT INTO home_meta (key, value, updated_at) VALUES ('schema', $1, now()) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()", fingerprint); err != nil {
+			return fmt.Errorf("record schema fingerprint: %w", err)
 		}
 		return nil
 	})

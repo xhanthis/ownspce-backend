@@ -33,10 +33,8 @@ func Shared(ctx context.Context) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	if added, err := store.SeedDishes(ctx); err != nil {
-		log.Printf("seed dishes: %v", err)
-	} else if added > 0 {
-		log.Printf("seeded %d default dishes", added)
+	if store.Applied {
+		log.Printf("home schema brought up to build %s", schemaFingerprint())
 	}
 	sharedHandler = NewServer(store, ConfigFromEnv())
 	return sharedHandler, nil
