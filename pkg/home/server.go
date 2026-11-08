@@ -73,17 +73,21 @@ type ctxKey struct{}
 type Server struct {
 	store  *Store
 	config Config
+	vision *Vision
 }
 
-// Config is what a deployment decides about who may call it.
+// Config is what a deployment decides about who may call it and what it may call.
 type Config struct {
 	// WebOrigins are the browser origins allowed to call the API, e.g. https://money.ownspce.com.
 	WebOrigins []string
 	// AllowLocalhost lets any http://localhost origin through, for running the web app locally.
 	AllowLocalhost bool
+	// VisionKey is the Claude key the inventory photo scan uses; empty turns that route off.
+	VisionKey string
 }
 
-// ConfigFromEnv reads HOME_WEB_ORIGINS (comma-separated) and allows localhost unless ENV is production.
+// ConfigFromEnv reads HOME_WEB_ORIGINS (comma-separated), HOME_VISION_KEY, and allows localhost unless ENV is
+// production.
 func ConfigFromEnv() Config {
 	var origins []string
 	for _, origin := range strings.Split(os.Getenv("HOME_WEB_ORIGINS"), ",") {
@@ -91,7 +95,20 @@ func ConfigFromEnv() Config {
 			origins = append(origins, trimmed)
 		}
 	}
-	return Config{WebOrigins: origins, AllowLocalhost: os.Getenv("ENV") != "production"}
+	return Config{WebOrigins: origins, AllowLocalhost: os.Getenv("ENV") != "production", VisionKey: os.Getenv("HOME_VISION_KEY")}
+}
+
+// timeoutByPath gives the photo scan its longer deadline and every other route requestTimeout.
+func timeoutByPath(next http.Handler) http.Handler {
+	short := middleware.Timeout(requestTimeout)(next)
+	long := middleware.Timeout(scanTimeout)(next)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == inventoryScanPath {
+			long.ServeHTTP(w, r)
+			return
+		}
+		short.ServeHTTP(w, r)
+	})
 }
 
 func (c Config) originAllowed(origin string) bool {
@@ -130,15 +147,21 @@ func (s *Server) cors(next http.Handler) http.Handler {
 // Args: store (from Open), config (allowed web origins)
 // Returns: a handler serving every route under /v1
 func NewServer(store *Store, config Config) http.Handler {
-	server := &Server{store: store, config: config}
+	server := &Server{store: store, config: config, vision: NewVision(config.VisionKey)}
 
 	router := chi.NewRouter()
-	router.Use(middleware.RequestID, middleware.Recoverer, server.cors, middleware.Timeout(requestTimeout))
+	router.Use(middleware.RequestID, middleware.Recoverer, server.cors, timeoutByPath)
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			limit := int64(maxBodyBytes)
 			if r.URL.Path == importPath {
 				limit = maxImportBytes
+			}
+			if r.URL.Path == mealImportPath {
+				limit = maxMealImportBytes
+			}
+			if r.URL.Path == inventoryScanPath {
+				limit = maxScanBytes
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			next.ServeHTTP(w, r)
@@ -168,6 +191,23 @@ func NewServer(store *Store, config Config) http.Handler {
 			authed.Post("/holdings", server.createHolding)
 			authed.Put("/holdings/{id}", server.replaceHolding)
 			authed.Delete("/holdings/{id}", server.removeHolding)
+			authed.Get("/meals", server.listMeals)
+			authed.Post("/meals", server.addMeal)
+			authed.Get("/dishes", server.listDishes)
+			authed.Get("/body", server.getBody)
+			authed.Put("/body/profile", server.putBodyProfile)
+			authed.Put("/body/days", server.putBodyDays)
+			authed.Post("/meals/import", server.importMeals)
+			authed.Put("/meals/{id}", server.replaceMeal)
+			authed.Delete("/meals/{id}", server.removeMeal)
+			authed.Put("/meals/{id}/tick", server.tickMeal)
+			authed.Delete("/meals/{id}/tick", server.tickMeal)
+			authed.Get("/inventory", server.listInventory)
+			authed.Post("/inventory/add", server.addStock)
+			authed.Delete("/inventory/add", server.unbuyLine)
+			authed.Post("/inventory/scan", server.scanInventory)
+			authed.Put("/inventory/items/{id}", server.setStock)
+			authed.Delete("/inventory/items/{id}", server.removeInventoryItem)
 		})
 	})
 	return router

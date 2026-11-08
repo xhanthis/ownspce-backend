@@ -22,6 +22,9 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+//go:embed inventory_schema.sql
+var inventorySchemaSQL string
+
 var (
 	ErrNotFound = errors.New("home: not found")
 	ErrConflict = errors.New("home: conflict")
@@ -181,6 +184,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 		if _, err := tx.Exec(ctx, schemaSQL); err != nil {
 			return fmt.Errorf("apply schema: %w", err)
+		}
+		if _, err := tx.Exec(ctx, inventorySchemaSQL); err != nil {
+			return fmt.Errorf("apply inventory schema: %w", err)
 		}
 		var seeded bool
 		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM home_categories)").Scan(&seeded); err != nil {
