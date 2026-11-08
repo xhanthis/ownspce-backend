@@ -75,16 +75,10 @@ func (v *Vision) ReadGroceries(ctx context.Context, image, mediaType string) ([]
 		log.Printf("inventory scan: model declined the photo")
 		return nil, errScanFailed
 	}
-	var text strings.Builder
-	for _, block := range response.Content {
-		if textBlock, ok := block.AsAny().(anthropic.TextBlock); ok {
-			text.WriteString(textBlock.Text)
-		}
-	}
 	var parsed struct {
 		Items []ScannedItem `json:"items"`
 	}
-	if err := json.Unmarshal([]byte(text.String()), &parsed); err != nil {
+	if err := json.Unmarshal([]byte(replyText(response)), &parsed); err != nil {
 		log.Printf("inventory scan: reply was not the expected shape: %v", err)
 		return nil, errScanFailed
 	}

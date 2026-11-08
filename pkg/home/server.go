@@ -103,7 +103,7 @@ func timeoutByPath(next http.Handler) http.Handler {
 	short := middleware.Timeout(requestTimeout)(next)
 	long := middleware.Timeout(scanTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == inventoryScanPath || r.URL.Path == dishEstimatePath || isProofPath(r.URL.Path) {
+		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == dishEstimatePath || isProofPath(r.URL.Path) {
 			long.ServeHTTP(w, r)
 			return
 		}
@@ -165,7 +165,7 @@ func newServer(store *Store, config Config, vision *Vision) http.Handler {
 			if r.URL.Path == mealImportPath {
 				limit = maxMealImportBytes
 			}
-			if r.URL.Path == inventoryScanPath {
+			if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath {
 				limit = maxScanBytes
 			}
 			if isProofPath(r.URL.Path) {
@@ -203,6 +203,7 @@ func newServer(store *Store, config Config, vision *Vision) http.Handler {
 			authed.Post("/meals", server.addMeal)
 			authed.Get("/dishes", server.listDishes)
 			authed.Post("/dishes/estimate", server.estimateDish)
+			authed.Post("/dishes/scan", server.scanDish)
 			authed.Get("/fixed", server.listFixed)
 			authed.Post("/fixed", server.createFixed)
 			authed.Put("/fixed/{id}", server.replaceFixed)

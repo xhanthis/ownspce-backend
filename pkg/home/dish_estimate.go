@@ -3,6 +3,7 @@ package home
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -25,9 +26,12 @@ const dishPrompt = `You are estimating nutrition for a pure-vegetarian Indian ho
 Give calories, protein, carbs and fat for ONE normal home serving for one adult (the plate as it is usually eaten: a sabzi comes with 2 chapati and a small salad, a rice dish is one full plate, a snack is one typical portion).
 Then list the ingredients needed to cook the dish for TWO people, each with a short plain name (no brand) and an amount the kitchen can count: grams or kilograms for solids ("200 g", "1 kg"), millilitres or litres for liquids ("250 ml"), pieces for countable things ("2 pcs"). Skip spices, salt, oil and other pantry staples. At most 12 ingredients. If the name is not food, answer with zero calories and no ingredients.`
 
-var dishSchema = map[string]any{
-	"type": "object",
-	"properties": map[string]any{
+var dishSchema = dishSchemaWith()
+
+// dishSchemaWith builds the JSON output schema a dish answer must follow: the per-plate numbers and the ingredient
+// rows, plus any extra string fields the caller names (the photo reader adds the dish name).
+func dishSchemaWith(extra ...string) map[string]any {
+	properties := map[string]any{
 		"kcal":     map[string]any{"type": "integer"},
 		"proteinG": map[string]any{"type": "integer"},
 		"carbsG":   map[string]any{"type": "integer"},
@@ -41,9 +45,13 @@ var dishSchema = map[string]any{
 				"additionalProperties": false,
 			},
 		},
-	},
-	"required":             []string{"kcal", "proteinG", "carbsG", "fatG", "ingredients"},
-	"additionalProperties": false,
+	}
+	required := []string{"kcal", "proteinG", "carbsG", "fatG", "ingredients"}
+	for _, field := range extra {
+		properties[field] = map[string]any{"type": "string"}
+		required = append(required, field)
+	}
+	return map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}
 }
 
 // DishEstimate is what the Add dish sheet fills in for a name the library has not seen: per-person nutrition and
@@ -76,19 +84,44 @@ func (v *Vision) EstimateDish(ctx context.Context, name string) (DishEstimate, e
 		log.Printf("dish estimate: model declined")
 		return DishEstimate{}, errEstimateFailed
 	}
+	estimate, _, err := dishFromReply(replyText(response), name)
+	if err != nil {
+		log.Printf("dish estimate: %v", err)
+		return DishEstimate{}, errEstimateFailed
+	}
+	log.Printf("dish estimate: ok in %s, %d ingredients, %d in / %d out tokens", time.Since(started).Round(time.Millisecond), len(estimate.Ingredients), response.Usage.InputTokens, response.Usage.OutputTokens)
+	return estimate, nil
+}
+
+// replyText joins the text blocks of a model answer; with a JSON output format that is the whole answer.
+func replyText(response *anthropic.Message) string {
 	var text strings.Builder
 	for _, block := range response.Content {
 		if textBlock, ok := block.AsAny().(anthropic.TextBlock); ok {
 			text.WriteString(textBlock.Text)
 		}
 	}
+	return text.String()
+}
+
+// dishFromReply turns a model answer into the estimate the app saves, through the same checks a posted meal gets,
+// so nothing the app cannot save or the inventory cannot count comes back.
+// Args: text (the model's JSON), name (the dish to validate under; empty takes the name the reply carries)
+// Returns: the estimate with serves 2 and the dish name, or why the reply is unusable
+func dishFromReply(text, name string) (DishEstimate, string, error) {
 	var parsed struct {
+		Name                         string
 		Kcal, ProteinG, CarbsG, FatG int
 		Ingredients                  []ingredientBody
 	}
-	if err := json.Unmarshal([]byte(text.String()), &parsed); err != nil {
-		log.Printf("dish estimate: reply was not the expected shape: %v", err)
-		return DishEstimate{}, errEstimateFailed
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return DishEstimate{}, "", fmt.Errorf("reply was not the expected shape: %w", err)
+	}
+	if name == "" {
+		name = displayName(parsed.Name)
+		if !textBetween(name, 1, maxDishNameText) {
+			return DishEstimate{}, "", errors.New("reply named no dish")
+		}
 	}
 	ingredients := make([]ingredientBody, 0, len(parsed.Ingredients))
 	for _, raw := range parsed.Ingredients {
@@ -104,11 +137,9 @@ func (v *Vision) EstimateDish(ctx context.Context, name string) (DishEstimate, e
 	body := mealBody{Day: "2000-01-01", Slot: "lunch", Name: name, Kcal: parsed.Kcal, ProteinG: parsed.ProteinG, CarbsG: parsed.CarbsG, FatG: parsed.FatG, Serves: 2, Ingredients: ingredients}
 	meal, err := body.validate()
 	if err != nil {
-		log.Printf("dish estimate: reply out of range: %v", err)
-		return DishEstimate{}, errEstimateFailed
+		return DishEstimate{}, "", fmt.Errorf("reply out of range: %w", err)
 	}
-	log.Printf("dish estimate: ok in %s, %d ingredients, %d in / %d out tokens", time.Since(started).Round(time.Millisecond), len(meal.Ingredients), response.Usage.InputTokens, response.Usage.OutputTokens)
-	return DishEstimate{Kcal: meal.Kcal, ProteinG: meal.ProteinG, CarbsG: meal.CarbsG, FatG: meal.FatG, Serves: meal.Serves, Ingredients: meal.Ingredients}, nil
+	return DishEstimate{Kcal: meal.Kcal, ProteinG: meal.ProteinG, CarbsG: meal.CarbsG, FatG: meal.FatG, Serves: meal.Serves, Ingredients: meal.Ingredients}, name, nil
 }
 
 type estimateBody struct {
