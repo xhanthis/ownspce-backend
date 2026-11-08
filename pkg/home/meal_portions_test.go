@@ -3,6 +3,8 @@ package home
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -139,5 +141,84 @@ func TestTicksRefuseStrangersAndOddPlates(t *testing.T) {
 	}
 	if after := len(mealsOn(t, server, rahul, day, day)); after != before {
 		t.Fatalf("a refused add must not leave a meal behind: %d → %d", before, after)
+	}
+}
+
+func TestEatersOnAddTakeStockOnceAndTheLastClearReturnsIt(t *testing.T) {
+	server, rahul, nikita, _, nikitaID := twoPhones(t)
+	tag := strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
+	paneer := strings.ToUpper(tag[:1]) + tag[1:] + " paneer"
+	day := testDays(1)[0]
+	if status, _ := call(t, server, http.MethodPost, "/v1/inventory/add", rahul, map[string]any{"name": paneer, "qty": "500 g"}); status != http.StatusOK {
+		t.Fatalf("buy paneer: %d", status)
+	}
+	body := map[string]any{
+		"day": day, "slot": "dinner", "name": dishName("Paneer bhurji"), "kcal": 500, "proteinG": 30, "carbsG": 20, "fatG": 30, "serves": 2,
+		"ingredients": []any{map[string]any{"name": paneer, "qty": "200 g", "link": ""}},
+		"eaters":      []any{map[string]any{"portion": 1}, map[string]any{"userId": nikitaID, "portion": 0.5}},
+	}
+	status, saved := call(t, server, http.MethodPost, "/v1/meals", rahul, body)
+	if status != http.StatusCreated {
+		t.Fatalf("add with eaters: %d %v", status, saved)
+	}
+	id := saved["id"].(string)
+	t.Cleanup(func() { call(t, server, http.MethodDelete, "/v1/meals/"+id, rahul, nil) })
+	if qty, _ := stockOf(t, server, rahul, paneer); qty != 300 {
+		t.Fatalf("adding with eaters should cook once: want 300 g left, got %v", qty)
+	}
+	if status, _ := call(t, server, http.MethodPut, "/v1/meals/"+id+"/tick", nikita, map[string]any{"portion": 2}); status != http.StatusNoContent {
+		t.Fatalf("Nikita changes her plate: %d", status)
+	}
+	if qty, _ := stockOf(t, server, rahul, paneer); qty != 300 {
+		t.Fatalf("a changed plate must not cook again: want 300 g, got %v", qty)
+	}
+	if status, _ := call(t, server, http.MethodDelete, "/v1/meals/"+id+"/tick", rahul, nil); status != http.StatusNoContent {
+		t.Fatalf("clear my tick: %d", status)
+	}
+	if qty, _ := stockOf(t, server, rahul, paneer); qty != 300 {
+		t.Fatalf("one tick still stands, stock stays taken: want 300 g, got %v", qty)
+	}
+	if status, _ := call(t, server, http.MethodDelete, "/v1/meals/"+id+"/tick?userId="+nikitaID, rahul, nil); status != http.StatusNoContent {
+		t.Fatalf("clear Nikita's tick from my phone: %d", status)
+	}
+	if qty, _ := stockOf(t, server, rahul, paneer); qty != 500 {
+		t.Fatalf("the last clear returns the stock: want 500 g, got %v", qty)
+	}
+}
+
+func TestTwoPhonesTickingThePersonAtOnceKeepOneTick(t *testing.T) {
+	server, rahul, nikita, _, nikitaID := twoPhones(t)
+	day := testDays(1)[0]
+	body := mealRow("lunch", "Dal rice", 600)
+	body["day"] = day
+	status, saved := call(t, server, http.MethodPost, "/v1/meals", rahul, body)
+	if status != http.StatusCreated {
+		t.Fatalf("add: %d %v", status, saved)
+	}
+	id := saved["id"].(string)
+	t.Cleanup(func() { call(t, server, http.MethodDelete, "/v1/meals/"+id, rahul, nil) })
+
+	var wg sync.WaitGroup
+	statuses := make([]int, 6)
+	for index := range statuses {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			token, payload := nikita, map[string]any{"portion": 1.5}
+			if index%2 == 0 {
+				token, payload = rahul, map[string]any{"userId": nikitaID, "portion": 0.5}
+			}
+			statuses[index], _ = call(t, server, http.MethodPut, "/v1/meals/"+id+"/tick", token, payload)
+		}()
+	}
+	wg.Wait()
+	for _, status := range statuses {
+		if status != http.StatusNoContent {
+			t.Fatalf("every tick should land: %v", statuses)
+		}
+	}
+	got := ticksOf(mealsOn(t, server, rahul, day, day)[0])
+	if len(got) != 1 || (got[nikitaID] != 0.5 && got[nikitaID] != 1.5) {
+		t.Fatalf("six ticks for one person should leave one tick at one of the plates sent: %v", got)
 	}
 }

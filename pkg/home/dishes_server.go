@@ -3,9 +3,11 @@ package home
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 )
 
@@ -95,8 +97,7 @@ func (s *Server) addMeal(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(eaters) > 0 {
 		if _, err := s.store.CookMeal(r.Context(), saved.ID, actor(r).ID); err != nil {
-			writeError(w, r, err)
-			return
+			log.Printf("request %s: meal %s saved, stock not taken: %v", middleware.GetReqID(r.Context()), saved.ID, err)
 		}
 	}
 	writeJSON(w, http.StatusCreated, saved)
