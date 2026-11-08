@@ -72,8 +72,8 @@ func TestBuyingFoldsNamesAndUnitsAndCookingDeductsOncePerMeal(t *testing.T) {
 	server, username, password := testServer(t)
 	token := signIn(t, server, username, password)
 	tag := strings.ReplaceAll(uuid.NewString(), "-", "")[:8]
-	tomato, tomatoes := tag+" tomato", tag+" tomatoes"
-	paneer := tag + " paneer"
+	tomato, tomatoes := tag+" tomato", strings.ToUpper(tag[:1])+tag[1:]+" tomatoes"
+	paneer := strings.ToUpper(tag[:1]) + tag[1:] + " paneer"
 	day := testDays(1)[0]
 
 	status, item := call(t, server, http.MethodPost, "/v1/inventory/add", token, map[string]any{"name": tomatoes, "qty": "1 kg"})

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -161,8 +163,15 @@ func itemKey(name string) string {
 	return strings.Join(words, " ")
 }
 
+// displayName tidies a typed name for the list: one space between words and a capital first letter, so
+// "tomatoes" and "Tomatoes" look the same beside each other.
 func displayName(name string) string {
-	return strings.Join(strings.Fields(name), " ")
+	joined := strings.Join(strings.Fields(name), " ")
+	if joined == "" {
+		return ""
+	}
+	first, size := utf8.DecodeRuneInString(joined)
+	return string(unicode.ToUpper(first)) + joined[size:]
 }
 
 func decodeIngredients(raw []byte) ([]Ingredient, error) {
@@ -194,7 +203,7 @@ func scanInventoryMove(row pgx.CollectableRow) (InventoryMove, error) {
 // Inventory lists everything in stock by name and the most recent moves with the meal each came from.
 // Returns: up to MaxInventoryItems items and MaxInventoryMoves moves
 func (s *Store) Inventory(ctx context.Context) ([]InventoryItem, []InventoryMove, error) {
-	rows, err := s.pool.Query(ctx, "SELECT id, name, unit, qty::float8, updated_at FROM home_inventory_items ORDER BY name, id LIMIT $1", MaxInventoryItems)
+	rows, err := s.pool.Query(ctx, "SELECT id, name, unit, qty::float8, updated_at FROM home_inventory_items ORDER BY lower(name), id LIMIT $1", MaxInventoryItems)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list inventory: %w", err)
 	}
