@@ -12,8 +12,10 @@ import (
 )
 
 const (
-	mealImportPath    = "/v1/meals/import"
-	maxKcal           = 5000
+	mealImportPath = "/v1/meals/import"
+	// maxMealImportBytes fits the largest menu the caps allow: 60 days of 10 meals with 40 ingredients each.
+	maxMealImportBytes = 4 << 20
+	maxKcal            = 5000
 	maxGrams          = 1000
 	maxServes         = 20
 	maxIngredients    = 40

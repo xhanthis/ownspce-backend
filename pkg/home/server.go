@@ -137,8 +137,11 @@ func NewServer(store *Store, config Config) http.Handler {
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			limit := int64(maxBodyBytes)
-			if r.URL.Path == importPath || r.URL.Path == mealImportPath {
+			if r.URL.Path == importPath {
 				limit = maxImportBytes
+			}
+			if r.URL.Path == mealImportPath {
+				limit = maxMealImportBytes
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 			next.ServeHTTP(w, r)
