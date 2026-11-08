@@ -27,10 +27,14 @@ func fakeModel(t *testing.T, reply string, stop string) (*Vision, *string) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
 		if request.Model != "claude-sonnet-5" {
-			t.Errorf("estimate must use Sonnet, got %q", request.Model)
+			t.Errorf("dish calls must use Sonnet, got %q", request.Model)
 		}
-		if len(request.Messages) > 0 && len(request.Messages[0].Content) > 0 {
-			prompt = request.Messages[0].Content[0].Text
+		if len(request.Messages) > 0 {
+			for _, block := range request.Messages[0].Content {
+				if block.Text != "" {
+					prompt = block.Text
+				}
+			}
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

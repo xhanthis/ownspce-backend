@@ -193,18 +193,9 @@ func (s *Server) scanInventory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errScanUnavailable)
 		return
 	}
-	var body scanBody
-	if err := decode(r, &body); err != nil {
+	body, err := readScanBody(r)
+	if err != nil {
 		writeError(w, r, err)
-		return
-	}
-	if !scanMediaTypes[body.MediaType] {
-		writeError(w, r, badRequest("mediaType must be image/jpeg, image/png, image/webp or image/gif"))
-		return
-	}
-	raw, err := base64.StdEncoding.DecodeString(body.Image)
-	if err != nil || len(raw) == 0 || len(raw) > maxScanImageSize {
-		writeError(w, r, badRequest("image must be base64 and at most 5 MB"))
 		return
 	}
 	items, err := s.vision.ReadGroceries(r.Context(), body.Image, body.MediaType)
@@ -213,4 +204,22 @@ func (s *Server) scanInventory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+// readScanBody decodes a photo upload and checks it is an image type the model accepts, at most maxScanImageSize
+// once decoded. The base64 text itself is what goes on to the model.
+// Returns: the body, or the 400 that says what was wrong with it
+func readScanBody(r *http.Request) (scanBody, error) {
+	var body scanBody
+	if err := decode(r, &body); err != nil {
+		return scanBody{}, err
+	}
+	if !scanMediaTypes[body.MediaType] {
+		return scanBody{}, badRequest("mediaType must be image/jpeg, image/png, image/webp or image/gif")
+	}
+	raw, err := base64.StdEncoding.DecodeString(body.Image)
+	if err != nil || len(raw) == 0 || len(raw) > maxScanImageSize {
+		return scanBody{}, badRequest("image must be base64 and at most 5 MB")
+	}
+	return body, nil
 }
