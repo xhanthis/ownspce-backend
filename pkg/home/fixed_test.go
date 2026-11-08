@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -35,7 +36,9 @@ func rawCall(t *testing.T, server *httptest.Server, method, path, token string, 
 	return response
 }
 
-func fixedItemsIn(t *testing.T, server *httptest.Server, token, month string) []map[string]any {
+// fixedItemsIn lists one month and keeps only the items this test created, because the shared test database holds
+// items from every earlier run and a fixed item is live in every month after its start.
+func fixedItemsIn(t *testing.T, server *httptest.Server, token, month string, mine ...string) []map[string]any {
 	t.Helper()
 	status, body := call(t, server, http.MethodGet, "/v1/fixed?month="+month, token, nil)
 	if status != http.StatusOK {
@@ -45,12 +48,35 @@ func fixedItemsIn(t *testing.T, server *httptest.Server, token, month string) []
 	if len(months) != 1 || months[0].(map[string]any)["month"] != month {
 		t.Fatalf("expected exactly %s back, got %v", month, months)
 	}
-	items := months[0].(map[string]any)["items"].([]any)
-	out := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		out = append(out, item.(map[string]any))
+	wanted := map[string]bool{}
+	for _, id := range mine {
+		wanted[id] = true
+	}
+	out := []map[string]any{}
+	for _, item := range months[0].(map[string]any)["items"].([]any) {
+		if row := item.(map[string]any); wanted[row["id"].(string)] {
+			out = append(out, row)
+		}
 	}
 	return out
+}
+
+// createFixed adds an item and removes it again when the test ends, so runs do not pile up in the shared database.
+func createFixed(t *testing.T, server *httptest.Server, token string, body map[string]any) map[string]any {
+	t.Helper()
+	status, item := call(t, server, http.MethodPost, "/v1/fixed", token, body)
+	if status != http.StatusCreated {
+		t.Fatalf("create %v: %d %v", body["name"], status, item)
+	}
+	id := item["id"].(string)
+	t.Cleanup(func() {
+		for offset := -1; offset <= 3; offset++ {
+			start, _ := time.Parse("2006-01", body["startsOn"].(string))
+			call(t, server, http.MethodDelete, "/v1/fixed/"+id+"/payments/"+ym(start.AddDate(0, offset, 0)), token, nil)
+		}
+		call(t, server, http.MethodDelete, "/v1/fixed/"+id+"?month="+body["startsOn"].(string), token, nil)
+	})
+	return item
 }
 
 func TestFixedRoutesNeedASession(t *testing.T) {
@@ -113,20 +139,19 @@ func TestFixedItemShowsEveryMonthUntilArchivedAndKeepsPaidHistory(t *testing.T) 
 	start := testMonth()
 	m0, m1, m2 := ym(start), ym(start.AddDate(0, 1, 0)), ym(start.AddDate(0, 2, 0))
 
-	status, rent := call(t, server, http.MethodPost, "/v1/fixed", token, map[string]any{"name": "  Rent ", "kind": "expense", "amountMinor": 2500000, "categoryId": expense, "dueDay": 5, "startsOn": m1})
-	if status != http.StatusCreated || rent["name"] != "Rent" || rent["startsOn"] != m1 || rent["endsOn"] != nil || rent["ownerId"] != nil {
-		t.Fatalf("create: %d %v", status, rent)
+	rent := createFixed(t, server, token, map[string]any{"name": "  Rent ", "kind": "expense", "amountMinor": 2500000, "categoryId": expense, "dueDay": 5, "startsOn": m1})
+	if rent["name"] != "Rent" || rent["startsOn"] != m1 || rent["endsOn"] != nil || rent["ownerId"] != nil {
+		t.Fatalf("create: %v", rent)
 	}
 	rentID := rent["id"].(string)
-	status, salary := call(t, server, http.MethodPost, "/v1/fixed", token, map[string]any{"name": "Salary", "kind": "income", "amountMinor": 14000000, "ownerId": myID, "startsOn": m1})
-	if status != http.StatusCreated {
-		t.Fatalf("create salary: %d %v", status, salary)
-	}
+	salary := createFixed(t, server, token, map[string]any{"name": "Salary", "kind": "income", "amountMinor": 14000000, "ownerId": myID, "startsOn": m1})
+	salaryID := salary["id"].(string)
+	var status int
 
-	if items := fixedItemsIn(t, server, token, m0); len(items) != 0 {
+	if items := fixedItemsIn(t, server, token, m0, rentID, salaryID); len(items) != 0 {
 		t.Fatalf("the month before the start should be empty, got %v", items)
 	}
-	items := fixedItemsIn(t, server, token, m2)
+	items := fixedItemsIn(t, server, token, m2, rentID, salaryID)
 	if len(items) != 2 || items[0]["name"] != "Rent" || items[1]["name"] != "Salary" || items[0]["payment"] != nil {
 		t.Fatalf("two months on, expenses first, nothing paid: %v", items)
 	}
@@ -150,7 +175,7 @@ func TestFixedItemShowsEveryMonthUntilArchivedAndKeepsPaidHistory(t *testing.T) 
 	if status != http.StatusOK || edited["amountMinor"].(float64) != 2700000 || edited["dueDay"].(float64) != 7 {
 		t.Fatalf("edit: %d %v", status, edited)
 	}
-	items = fixedItemsIn(t, server, token, m1)
+	items = fixedItemsIn(t, server, token, m1, rentID, salaryID)
 	if items[0]["amountMinor"].(float64) != 2700000 || items[0]["payment"].(map[string]any)["amountMinor"].(float64) != 2600000 {
 		t.Fatalf("the item shows the new amount, the paid month keeps what was paid: %v", items[0])
 	}
@@ -158,19 +183,18 @@ func TestFixedItemShowsEveryMonthUntilArchivedAndKeepsPaidHistory(t *testing.T) 
 	if status, _ := call(t, server, http.MethodDelete, "/v1/fixed/"+rentID+"?month="+m2, token, nil); status != http.StatusNoContent {
 		t.Fatalf("archive from an unpaid month: %d", status)
 	}
-	if items := fixedItemsIn(t, server, token, m2); len(items) != 1 || items[0]["name"] != "Salary" {
+	if items := fixedItemsIn(t, server, token, m2, rentID, salaryID); len(items) != 1 || items[0]["name"] != "Salary" {
 		t.Fatalf("archived from %s, rent should be gone there: %v", m2, items)
 	}
-	items = fixedItemsIn(t, server, token, m1)
+	items = fixedItemsIn(t, server, token, m1, rentID, salaryID)
 	if len(items) != 2 || items[0]["name"] != "Rent" || items[0]["endsOn"] != m1 || items[0]["payment"] == nil {
 		t.Fatalf("the paid month keeps rent with its payment and an end: %v", items)
 	}
 
-	salaryID := salary["id"].(string)
 	if status, _ := call(t, server, http.MethodDelete, "/v1/fixed/"+salaryID+"?month="+m2, token, nil); status != http.StatusNoContent {
 		t.Fatalf("delete never-paid item: %d", status)
 	}
-	if items := fixedItemsIn(t, server, token, m1); len(items) != 1 {
+	if items := fixedItemsIn(t, server, token, m1, rentID, salaryID); len(items) != 1 {
 		t.Fatalf("a never-paid item is deleted outright, even from earlier months: %v", items)
 	}
 	if status, _ := call(t, server, http.MethodDelete, "/v1/fixed/"+salaryID, token, nil); status != http.StatusNotFound {
@@ -179,7 +203,7 @@ func TestFixedItemShowsEveryMonthUntilArchivedAndKeepsPaidHistory(t *testing.T) 
 
 	status, body := call(t, server, http.MethodGet, fmt.Sprintf("/v1/fixed?from=%s&to=%s", m0, m2), token, nil)
 	months := body["months"].([]any)
-	if status != http.StatusOK || len(months) != 3 || months[0].(map[string]any)["month"] != m0 || len(months[1].(map[string]any)["items"].([]any)) != 1 {
+	if status != http.StatusOK || len(months) != 3 || months[0].(map[string]any)["month"] != m0 || months[2].(map[string]any)["month"] != m2 {
 		t.Fatalf("range read: %d %v", status, body)
 	}
 	if _, ok := body["holdingsSipMinor"].(float64); !ok {
@@ -191,10 +215,7 @@ func TestFixedProofFollowsThePayment(t *testing.T) {
 	server, username, password := testServer(t)
 	token := signIn(t, server, username, password)
 	month := ym(testMonth())
-	status, item := call(t, server, http.MethodPost, "/v1/fixed", token, map[string]any{"name": "Electricity", "kind": "expense", "amountMinor": 250000, "startsOn": month})
-	if status != http.StatusCreated {
-		t.Fatalf("create: %d %v", status, item)
-	}
+	item := createFixed(t, server, token, map[string]any{"name": "Electricity", "kind": "expense", "amountMinor": 250000, "startsOn": month})
 	id := item["id"].(string)
 	proofPath := "/v1/fixed/" + id + "/payments/" + month + "/proof"
 	pdf := []byte("%PDF-1.4 test bill " + strings.Repeat("x", 500))
@@ -221,8 +242,8 @@ func TestFixedProofFollowsThePayment(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !bytes.Equal(got, pdf) || response.Header.Get("Content-Type") != "application/pdf" || !strings.Contains(response.Header.Get("Cache-Control"), "private") {
 		t.Fatalf("read back: %d %q %q", response.StatusCode, response.Header.Get("Content-Type"), response.Header.Get("Cache-Control"))
 	}
-	items := fixedItemsIn(t, server, token, month)
-	if items[0]["payment"].(map[string]any)["proofType"] != "application/pdf" {
+	items := fixedItemsIn(t, server, token, month, id)
+	if len(items) != 1 || items[0]["payment"].(map[string]any)["proofType"] != "application/pdf" {
 		t.Fatalf("the month view says a proof is attached: %v", items[0])
 	}
 
@@ -234,5 +255,36 @@ func TestFixedProofFollowsThePayment(t *testing.T) {
 	}
 	if status, _ := call(t, server, http.MethodDelete, "/v1/fixed/"+id+"/payments/"+month, token, nil); status != http.StatusNotFound {
 		t.Fatalf("unticking twice: %d", status)
+	}
+}
+
+func TestTwoPhonesTickingTheSameMonthLeaveOnePayment(t *testing.T) {
+	server, username, password := testServer(t)
+	token := signIn(t, server, username, password)
+	month := ym(testMonth())
+	item := createFixed(t, server, token, map[string]any{"name": "Maid", "kind": "expense", "amountMinor": 600000, "startsOn": month})
+	id := item["id"].(string)
+	var wg sync.WaitGroup
+	statuses := make([]int, 6)
+	for index := range statuses {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			statuses[index], _ = call(t, server, http.MethodPut, "/v1/fixed/"+id+"/payments/"+month, token, map[string]any{"amountMinor": 600000 + index, "note": "phone"})
+		}()
+	}
+	wg.Wait()
+	for _, status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("every tick should land: %v", statuses)
+		}
+	}
+	items := fixedItemsIn(t, server, token, month, id)
+	if len(items) != 1 || items[0]["payment"] == nil {
+		t.Fatalf("one item, one payment: %v", items)
+	}
+	status, body := call(t, server, http.MethodGet, "/v1/fixed/"+id+"/payments/"+month+"/proof", token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("no proof yet: %d %v", status, body)
 	}
 }
