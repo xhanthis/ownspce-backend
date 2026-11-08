@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS home_meals (id uuid PRIMARY KEY, day date NOT NULL, s
 CREATE INDEX IF NOT EXISTS home_meals_day_idx ON home_meals (day DESC, sort_order, id);
 
 CREATE TABLE IF NOT EXISTS home_meal_ticks (meal_id uuid NOT NULL REFERENCES home_meals(id) ON DELETE CASCADE, user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, ticked_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (meal_id, user_id));
+ALTER TABLE home_meal_ticks ADD COLUMN IF NOT EXISTS portion numeric(4,2) NOT NULL DEFAULT 1 CHECK (portion > 0 AND portion <= 5);
 
 CREATE TABLE IF NOT EXISTS home_dishes (id uuid PRIMARY KEY, name text NOT NULL, name_key text NOT NULL UNIQUE, kcal integer NOT NULL CHECK (kcal >= 0), protein_g integer NOT NULL DEFAULT 0 CHECK (protein_g >= 0), carbs_g integer NOT NULL DEFAULT 0 CHECK (carbs_g >= 0), fat_g integer NOT NULL DEFAULT 0 CHECK (fat_g >= 0), serves integer NOT NULL DEFAULT 2 CHECK (serves > 0), ingredients jsonb NOT NULL DEFAULT '[]'::jsonb, times_used integer NOT NULL DEFAULT 0, last_used_at timestamptz NOT NULL DEFAULT now(), created_by uuid REFERENCES home_users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX IF NOT EXISTS home_dishes_recent_idx ON home_dishes (last_used_at DESC, times_used DESC);

@@ -41,8 +41,21 @@ type Meal struct {
 	Ingredients []Ingredient `json:"ingredients"`
 	SortOrder   int          `json:"sortOrder"`
 	TickedBy    []uuid.UUID  `json:"tickedBy"`
+	Ticks       []MealTick   `json:"ticks"`
 	UpdatedAt   time.Time    `json:"updatedAt"`
 }
+
+// MealTick is one member's plate of a meal: who, and how many portions of the meal's per-plate numbers.
+type MealTick struct {
+	UserID  uuid.UUID `json:"userId"`
+	Portion float64   `json:"portion"`
+}
+
+// mealPortions are the plate sizes a tick may carry; the app offers the same five.
+var mealPortions = map[float64]bool{0.5: true, 1: true, 1.5: true, 2: true, 3: true}
+
+// validPortion reports whether a portion is an allowed plate size. Zero means "not given" and reads as one plate.
+func validPortion(portion float64) bool { return portion == 0 || mealPortions[portion] }
 
 // MealImportResult counts what a pasted menu holds and how many of its days replaced an existing plan.
 type MealImportResult struct {
@@ -54,21 +67,21 @@ type MealImportResult struct {
 func scanMeal(row pgx.CollectableRow) (Meal, error) {
 	var meal Meal
 	var ingredients []byte
-	var ticked []string
-	if err := row.Scan(&meal.ID, &meal.DishID, &meal.Day, &meal.Slot, &meal.Name, &meal.Kcal, &meal.ProteinG, &meal.CarbsG, &meal.FatG, &meal.Serves, &ingredients, &meal.SortOrder, &ticked, &meal.UpdatedAt); err != nil {
+	var ticks []byte
+	if err := row.Scan(&meal.ID, &meal.DishID, &meal.Day, &meal.Slot, &meal.Name, &meal.Kcal, &meal.ProteinG, &meal.CarbsG, &meal.FatG, &meal.Serves, &ingredients, &meal.SortOrder, &ticks, &meal.UpdatedAt); err != nil {
 		return Meal{}, err
 	}
 	meal.Ingredients = []Ingredient{}
 	if err := json.Unmarshal(ingredients, &meal.Ingredients); err != nil {
 		return Meal{}, fmt.Errorf("decode ingredients: %w", err)
 	}
-	meal.TickedBy = make([]uuid.UUID, 0, len(ticked))
-	for _, raw := range ticked {
-		id, err := uuid.Parse(raw)
-		if err != nil {
-			return Meal{}, fmt.Errorf("decode tick: %w", err)
-		}
-		meal.TickedBy = append(meal.TickedBy, id)
+	meal.Ticks = []MealTick{}
+	if err := json.Unmarshal(ticks, &meal.Ticks); err != nil {
+		return Meal{}, fmt.Errorf("decode ticks: %w", err)
+	}
+	meal.TickedBy = make([]uuid.UUID, 0, len(meal.Ticks))
+	for _, tick := range meal.Ticks {
+		meal.TickedBy = append(meal.TickedBy, tick.UserID)
 	}
 	return meal, nil
 }
@@ -88,7 +101,7 @@ func encodeIngredients(ingredients []Ingredient) (string, error) {
 // Args: ctx, from, to (yyyy-mm-dd, validated by the caller)
 // Returns: up to MaxMealsPerRead meals, and whether more existed beyond the cap
 func (s *Store) Meals(ctx context.Context, from, to string) ([]Meal, bool, error) {
-	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, coalesce(array_agg(t.user_id::text) FILTER (WHERE t.user_id IS NOT NULL), '{}'), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.day BETWEEN $1::date AND $2::date GROUP BY m.id ORDER BY m.day DESC, CASE m.slot WHEN 'breakfast' THEN 0 WHEN 'lunch' THEN 1 WHEN 'snack' THEN 2 ELSE 3 END, m.sort_order, m.id LIMIT $3", from, to, MaxMealsPerRead+1)
+	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, coalesce(jsonb_agg(jsonb_build_object('userId', t.user_id, 'portion', t.portion::float8) ORDER BY t.ticked_at, t.user_id) FILTER (WHERE t.user_id IS NOT NULL), '[]'::jsonb), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.day BETWEEN $1::date AND $2::date GROUP BY m.id ORDER BY m.day DESC, CASE m.slot WHEN 'breakfast' THEN 0 WHEN 'lunch' THEN 1 WHEN 'snack' THEN 2 ELSE 3 END, m.sort_order, m.id LIMIT $3", from, to, MaxMealsPerRead+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("list meals: %w", err)
 	}
@@ -105,7 +118,7 @@ func (s *Store) Meals(ctx context.Context, from, to string) ([]Meal, bool, error
 // MealByID reads one meal with its ticks.
 // Returns: ErrNotFound when there is no such meal
 func (s *Store) MealByID(ctx context.Context, id uuid.UUID) (Meal, error) {
-	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, coalesce(array_agg(t.user_id::text) FILTER (WHERE t.user_id IS NOT NULL), '{}'), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.id = $1 GROUP BY m.id LIMIT 1", id)
+	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, coalesce(jsonb_agg(jsonb_build_object('userId', t.user_id, 'portion', t.portion::float8) ORDER BY t.ticked_at, t.user_id) FILTER (WHERE t.user_id IS NOT NULL), '[]'::jsonb), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.id = $1 GROUP BY m.id LIMIT 1", id)
 	if err != nil {
 		return Meal{}, fmt.Errorf("read meal: %w", err)
 	}
@@ -149,9 +162,13 @@ func (s *Store) RemoveMeal(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// TickMeal records, or clears, that one member ate a meal. Ticking twice is one tick; clearing twice is fine.
-// Returns: ErrNotFound when there is no such meal
-func (s *Store) TickMeal(ctx context.Context, id, userID uuid.UUID, ate bool) error {
+// TickMeal records, or clears, that one member ate a meal at a portion. Ticking twice keeps one tick with the latest
+// portion; clearing twice is fine. A portion of zero means one plate.
+// Returns: ErrNotFound when there is no such meal; ErrInvalid when the member is not in this home
+func (s *Store) TickMeal(ctx context.Context, id, userID uuid.UUID, portion float64, ate bool) error {
+	if portion == 0 {
+		portion = 1
+	}
 	var exists bool
 	if err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM home_meals WHERE id = $1)", id).Scan(&exists); err != nil {
 		return fmt.Errorf("check meal: %w", err)
@@ -161,9 +178,12 @@ func (s *Store) TickMeal(ctx context.Context, id, userID uuid.UUID, ate bool) er
 	}
 	var err error
 	if ate {
-		_, err = s.pool.Exec(ctx, "INSERT INTO home_meal_ticks (meal_id, user_id) VALUES ($1, $2) ON CONFLICT (meal_id, user_id) DO UPDATE SET ticked_at = now()", id, userID)
+		_, err = s.pool.Exec(ctx, "INSERT INTO home_meal_ticks (meal_id, user_id, portion) VALUES ($1, $2, $3) ON CONFLICT (meal_id, user_id) DO UPDATE SET portion = EXCLUDED.portion, ticked_at = now()", id, userID, portion)
 	} else {
 		_, err = s.pool.Exec(ctx, "DELETE FROM home_meal_ticks WHERE meal_id = $1 AND user_id = $2", id, userID)
+	}
+	if isCode(err, "23503") {
+		return fmt.Errorf("%w: that person is not in this home", ErrInvalid)
 	}
 	if err != nil {
 		return fmt.Errorf("tick meal: %w", err)
