@@ -62,6 +62,11 @@ func serve(ctx context.Context, store *home.Store) {
 	if port == "" {
 		port = "5002"
 	}
+	if added, err := store.SeedDishes(ctx); err != nil {
+		log.Printf("seed dishes: %v", err)
+	} else if added > 0 {
+		log.Printf("seeded %d default dishes", added)
+	}
 	server := &http.Server{Addr: ":" + port, Handler: home.NewServer(store, home.ConfigFromEnv()), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 
 	go func() {
