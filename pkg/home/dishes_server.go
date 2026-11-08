@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/google/uuid"
 )
 
 const defaultDishSearchLimit = 8
@@ -35,7 +37,30 @@ func (s *Server) listDishes(w http.ResponseWriter, r *http.Request) {
 
 type addMealBody struct {
 	mealBody
-	SaveToLibrary bool `json:"saveToLibrary"`
+	SaveToLibrary bool       `json:"saveToLibrary"`
+	Eaters        []tickBody `json:"eaters"`
+}
+
+// eaterTicks turns the eaters into ticks: each a member of this home at an offered plate size, no member twice, and
+// no more rows than the home can hold. An eater without a userId is the caller.
+func (b addMealBody) eaterTicks(self uuid.UUID) ([]MealTick, error) {
+	if len(b.Eaters) > maxMembers {
+		return nil, badRequest(fmt.Sprintf("at most %d eaters", maxMembers))
+	}
+	ticks := make([]MealTick, 0, len(b.Eaters))
+	seen := map[uuid.UUID]bool{}
+	for _, eater := range b.Eaters {
+		who, portion, err := eater.validate(self)
+		if err != nil {
+			return nil, err
+		}
+		if seen[who] {
+			return nil, badRequest("each person can be listed once")
+		}
+		seen[who] = true
+		ticks = append(ticks, MealTick{UserID: who, Portion: portion})
+	}
+	return ticks, nil
 }
 
 // addMeal puts one dish on one day's slot and teaches the library about it.
@@ -51,14 +76,28 @@ func (s *Server) addMeal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	saved, err := s.store.AddMeal(r.Context(), meal, actor(r).ID, body.SaveToLibrary)
-	if errors.Is(err, ErrSlotFull) {
-		writeError(w, r, badRequest(fmt.Sprintf("that slot already has %d dishes", MaxMealsPerDay)))
-		return
-	}
+	eaters, err := body.eaterTicks(actor(r).ID)
 	if err != nil {
 		writeError(w, r, err)
 		return
+	}
+	saved, err := s.store.AddMeal(r.Context(), meal, actor(r).ID, body.SaveToLibrary, eaters)
+	switch {
+	case errors.Is(err, ErrSlotFull):
+		writeError(w, r, badRequest(fmt.Sprintf("that slot already has %d dishes", MaxMealsPerDay)))
+		return
+	case errors.Is(err, ErrInvalid):
+		writeError(w, r, badRequest("that person is not in this home"))
+		return
+	case err != nil:
+		writeError(w, r, err)
+		return
+	}
+	if len(eaters) > 0 {
+		if _, err := s.store.CookMeal(r.Context(), saved.ID, actor(r).ID); err != nil {
+			writeError(w, r, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, saved)
 }

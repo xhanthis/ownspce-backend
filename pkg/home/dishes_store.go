@@ -97,9 +97,11 @@ func learnDishes(ctx context.Context, tx pgx.Tx, meals []Meal, actor uuid.UUID) 
 // AddMeal puts one dish on one day and records it in the library, in one transaction.
 // A name the library has not seen is added with these numbers. A known name counts one more use; its stored
 // numbers change only when overwrite is set.
-// Returns: the stored meal with its dish id; ErrSlotFull when the slot already holds MaxMealsPerDay dishes
+// Each eater gets a tick at their portion in the same transaction, so a meal never lands half-logged.
+// Returns: the stored meal with its dish id; ErrSlotFull when the slot already holds MaxMealsPerDay dishes;
+// ErrInvalid when an eater is not a member of this home
 // Handles: two adds at once (the same lock as an import), so the slot cap and sort order hold
-func (s *Store) AddMeal(ctx context.Context, meal Meal, actor uuid.UUID, overwrite bool) (Meal, error) {
+func (s *Store) AddMeal(ctx context.Context, meal Meal, actor uuid.UUID, overwrite bool, eaters []MealTick) (Meal, error) {
 	ingredients, err := encodeIngredients(meal.Ingredients)
 	if err != nil {
 		return Meal{}, err
@@ -122,6 +124,15 @@ func (s *Store) AddMeal(ctx context.Context, meal Meal, actor uuid.UUID, overwri
 		}
 		if _, err := tx.Exec(ctx, "INSERT INTO home_meals (id, day, slot, name, kcal, protein_g, carbs_g, fat_g, serves, ingredients, sort_order, created_by, dish_id) VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, (SELECT coalesce(max(sort_order) + 1, 0) FROM home_meals WHERE day = $2::date AND slot = $3), $11, $12)", id, meal.Day, meal.Slot, meal.Name, meal.Kcal, meal.ProteinG, meal.CarbsG, meal.FatG, meal.Serves, ingredients, actor, dishID); err != nil {
 			return fmt.Errorf("add meal: %w", err)
+		}
+		for _, eater := range eaters {
+			_, err := tx.Exec(ctx, "INSERT INTO home_meal_ticks (meal_id, user_id, portion) VALUES ($1, $2, $3) ON CONFLICT (meal_id, user_id) DO UPDATE SET portion = EXCLUDED.portion", id, eater.UserID, eater.Portion)
+			if isCode(err, "23503") {
+				return fmt.Errorf("%w: that person is not in this home", ErrInvalid)
+			}
+			if err != nil {
+				return fmt.Errorf("tick eater: %w", err)
+			}
 		}
 		return nil
 	})

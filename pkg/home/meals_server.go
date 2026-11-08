@@ -202,8 +202,31 @@ func (s *Server) removeMeal(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// tickMeal marks a meal as eaten by the signed-in member (PUT) or clears that mark (DELETE). The first tick takes
-// the recipe's ingredients out of stock; clearing the last tick puts them back.
+// tickBody says who ate and how much. Both are optional: no body means the signed-in member at one plate.
+type tickBody struct {
+	UserID  *uuid.UUID `json:"userId"`
+	Portion float64    `json:"portion"`
+}
+
+// validate fills the defaults in and refuses a plate size the app does not offer.
+func (b tickBody) validate(self uuid.UUID) (uuid.UUID, float64, error) {
+	if !validPortion(b.Portion) {
+		return uuid.Nil, 0, badRequest("portion must be 0.5, 1, 1.5, 2 or 3")
+	}
+	who := self
+	if b.UserID != nil {
+		who = *b.UserID
+	}
+	portion := b.Portion
+	if portion == 0 {
+		portion = 1
+	}
+	return who, portion, nil
+}
+
+// tickMeal marks a meal as eaten (PUT) or clears that mark (DELETE), for the signed-in member or, with a userId, for
+// another member of this home. PUT takes an optional {userId, portion} body; DELETE an optional ?userId=. The first
+// tick takes the recipe's ingredients out of stock; clearing the last tick puts them back.
 func (s *Server) tickMeal(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -211,7 +234,32 @@ func (s *Server) tickMeal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ate := r.Method == http.MethodPut
-	if err := s.store.TickMeal(r.Context(), id, actor(r).ID, ate); err != nil {
+	var body tickBody
+	if ate && r.ContentLength != 0 {
+		if err := decode(r, &body); err != nil {
+			writeError(w, r, err)
+			return
+		}
+	}
+	if raw := r.URL.Query().Get("userId"); !ate && raw != "" {
+		who, err := uuid.Parse(raw)
+		if err != nil {
+			writeError(w, r, badRequest("userId must be a member id"))
+			return
+		}
+		body.UserID = &who
+	}
+	who, portion, err := body.validate(actor(r).ID)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	err = s.store.TickMeal(r.Context(), id, who, portion, ate)
+	if errors.Is(err, ErrInvalid) {
+		writeError(w, r, badRequest("that person is not in this home"))
+		return
+	}
+	if err != nil {
 		writeError(w, r, err)
 		return
 	}
