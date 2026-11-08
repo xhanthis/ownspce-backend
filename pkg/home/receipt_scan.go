@@ -31,6 +31,10 @@ var receiptScanSchema = map[string]any{
 	"additionalProperties": false,
 }
 
+// receiptModel reads receipts: a screenshot of printed numbers needs far less than a plate of food, and Haiku answers
+// in about a second.
+const receiptModel = "claude-haiku-4-5-20251001"
+
 const maxPayeeText = 80
 
 var receiptDirections = map[string]string{"paid": "expense", "received": "income"}
@@ -50,9 +54,9 @@ type ReceiptScan struct {
 func (v *Vision) ReadReceipt(ctx context.Context, image, mediaType string) (ReceiptScan, error) {
 	started := time.Now()
 	response, err := v.client.Messages.New(ctx, anthropic.MessageNewParams{
-		Model:        visionModel,
+		Model:        receiptModel,
 		MaxTokens:    300,
-		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow, Format: anthropic.JSONOutputFormatParam{Schema: receiptScanSchema}},
+		OutputConfig: anthropic.OutputConfigParam{Format: anthropic.JSONOutputFormatParam{Schema: receiptScanSchema}},
 		Messages: []anthropic.MessageParam{
 			anthropic.NewUserMessage(anthropic.NewImageBlockBase64(mediaType, image), anthropic.NewTextBlock(receiptScanPrompt)),
 		},

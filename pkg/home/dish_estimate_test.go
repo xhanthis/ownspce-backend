@@ -12,6 +12,9 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
+// fakeModelSeen is the model name of the last fake call, for tests that pin which model a reader uses.
+var fakeModelSeen string
+
 // fakeModel answers every Messages call with one text block carrying reply, and records the prompt it saw.
 func fakeModel(t *testing.T, reply string, stop string) (*Vision, *string) {
 	t.Helper()
@@ -26,8 +29,9 @@ func fakeModel(t *testing.T, reply string, stop string) (*Vision, *string) {
 			} `json:"messages"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		if request.Model != "claude-sonnet-5" {
-			t.Errorf("dish calls must use Sonnet, got %q", request.Model)
+		fakeModelSeen = request.Model
+		if request.Model != visionModel && request.Model != receiptModel {
+			t.Errorf("unexpected model %q", request.Model)
 		}
 		if len(request.Messages) > 0 {
 			for _, block := range request.Messages[0].Content {

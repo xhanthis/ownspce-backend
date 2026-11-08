@@ -94,6 +94,9 @@ func TestReadReceiptAsksForOnePaymentAndMapsTheAnswer(t *testing.T) {
 	if !strings.Contains(*prompt, "never the account balance") || !strings.Contains(*prompt, "yyyy-mm-dd") {
 		t.Fatalf("prompt did not pin the amount and date rules: %s", *prompt)
 	}
+	if fakeModelSeen != receiptModel || receiptModel != "claude-haiku-4-5-20251001" {
+		t.Fatalf("receipts must be read by Haiku, got %q", fakeModelSeen)
+	}
 	for name, tc := range map[string]struct{ reply, stop string }{
 		"no payment": {`{"amount":0,"payee":"","direction":"none","date":""}`, "end_turn"},
 		"refusal":    {`{}`, "refusal"},
