@@ -16,12 +16,12 @@ const (
 	// maxMealImportBytes fits the largest menu the caps allow: 60 days of 10 meals with 40 ingredients each.
 	maxMealImportBytes = 4 << 20
 	maxKcal            = 5000
-	maxGrams          = 1000
-	maxServes         = 20
-	maxIngredients    = 40
-	maxIngredientName = 80
-	maxIngredientQty  = 40
-	maxLinkLength     = 500
+	maxGrams           = 1000
+	maxServes          = 20
+	maxIngredients     = 40
+	maxIngredientName  = 80
+	maxIngredientQty   = 40
+	maxLinkLength      = 500
 )
 
 var mealSlots = set("breakfast", "lunch", "snack", "dinner")
