@@ -12,7 +12,7 @@ import (
 	"github.com/anthropics/anthropic-sdk-go/option"
 )
 
-const visionModel = "claude-opus-5"
+const visionModel = "claude-sonnet-5"
 
 // ScannedItem is one row the photo reader suggests. Qty is the same free text ParseQuantity reads.
 type ScannedItem struct {

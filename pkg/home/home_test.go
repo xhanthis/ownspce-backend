@@ -18,6 +18,16 @@ import (
 // Tests skip when it is unset, because they need a real Postgres to mean anything.
 func testServer(t *testing.T) (*httptest.Server, string, string) {
 	t.Helper()
+	store := testStore(t)
+	username, password := testUser(t, store)
+	server := httptest.NewServer(NewServer(store, Config{WebOrigins: []string{"https://home.example.invalid"}, AllowLocalhost: true}))
+	t.Cleanup(server.Close)
+	return server, username, password
+}
+
+// testStore opens the Neon test branch, or skips the test when HOME_TEST_DATABASE_URL is not set.
+func testStore(t *testing.T) *Store {
+	t.Helper()
 	databaseURL := os.Getenv("HOME_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("HOME_TEST_DATABASE_URL not set")
@@ -27,7 +37,12 @@ func testServer(t *testing.T) (*httptest.Server, string, string) {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(store.Close)
+	return store
+}
 
+// testUser adds a throwaway account and returns its username and password.
+func testUser(t *testing.T, store *Store) (string, string) {
+	t.Helper()
 	username := "t" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20]
 	hash, err := HashPassword("correct horse battery")
 	if err != nil {
@@ -36,9 +51,7 @@ func testServer(t *testing.T) (*httptest.Server, string, string) {
 	if _, err := store.CreateUser(context.Background(), username, "Test Person", hash); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
-	server := httptest.NewServer(NewServer(store, Config{WebOrigins: []string{"https://home.example.invalid"}, AllowLocalhost: true}))
-	t.Cleanup(server.Close)
-	return server, username, "correct horse battery"
+	return username, "correct horse battery"
 }
 
 func call(t *testing.T, server *httptest.Server, method, path, token string, body any) (int, map[string]any) {
