@@ -189,3 +189,20 @@ func TestMealRoutesRefuseAMissingToken(t *testing.T) {
 		}
 	}
 }
+
+func TestLateNightIsAMealSlotAndBrunchIsNot(t *testing.T) {
+	server, username, password := testServer(t)
+	token := signIn(t, server, username, password)
+	day := testDays(1)[0]
+	row := mealRow("late", dishName("Maggi"), 400)
+	row["day"] = day
+	if status, body := call(t, server, http.MethodPost, "/v1/meals", token, row); status != http.StatusCreated {
+		t.Fatalf("late night: %d %v", status, body)
+	}
+	row = mealRow("brunch", dishName("Poha"), 300)
+	row["day"] = day
+	status, body := call(t, server, http.MethodPost, "/v1/meals", token, row)
+	if status != http.StatusBadRequest || !strings.Contains(body["error"].(map[string]any)["message"].(string), "or late") {
+		t.Fatalf("brunch: %d %v", status, body)
+	}
+}
