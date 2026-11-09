@@ -103,7 +103,7 @@ func timeoutByPath(next http.Handler) http.Handler {
 	short := middleware.Timeout(requestTimeout)(next)
 	long := middleware.Timeout(scanTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == receiptScanPath || r.URL.Path == dishEstimatePath || isProofPath(r.URL.Path) {
+		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == receiptScanPath || r.URL.Path == dishEstimatePath || r.URL.Path == insightsSummaryPath || isProofPath(r.URL.Path) {
 			long.ServeHTTP(w, r)
 			return
 		}
@@ -217,6 +217,7 @@ func newServer(store *Store, config Config, vision *Vision) http.Handler {
 			authed.Get("/body", server.getBody)
 			authed.Put("/body/profile", server.putBodyProfile)
 			authed.Put("/body/days", server.putBodyDays)
+			authed.Post("/insights/summary", server.insightsSummary)
 			authed.Post("/meals/import", server.importMeals)
 			authed.Put("/meals/{id}", server.replaceMeal)
 			authed.Delete("/meals/{id}", server.removeMeal)
@@ -554,6 +555,11 @@ func (s *Server) writeEntry(w http.ResponseWriter, r *http.Request, id *uuid.UUI
 	if err != nil {
 		writeError(w, r, err)
 		return
+	}
+	if id == nil && saved.Type == "expense" {
+		if err := s.store.MarkOrderedInAroundEntry(r.Context(), saved, actor(r).ID); err != nil {
+			log.Printf("request %s: entry saved, ordered-in mark not applied: %v", middleware.GetReqID(r.Context()), err)
+		}
 	}
 	writeJSON(w, status, saved)
 }
