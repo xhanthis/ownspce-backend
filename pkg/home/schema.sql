@@ -39,3 +39,7 @@ ALTER TABLE home_body_profiles ADD COLUMN IF NOT EXISTS protein_g integer CHECK 
 ALTER TABLE home_meals ADD COLUMN IF NOT EXISTS ordered_in boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS home_insight_notes (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, figures_hash text NOT NULL, note text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, figures_hash));
 CREATE INDEX IF NOT EXISTS home_insight_notes_user_created_idx ON home_insight_notes (user_id, created_at DESC);
+
+-- AI meal ideas for a day: dishes for empty slots and better options for planned ones, kept per exact input so the same day is never asked twice.
+CREATE TABLE IF NOT EXISTS home_meal_ideas (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, input_hash text NOT NULL, day date NOT NULL, ideas jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, input_hash));
+CREATE INDEX IF NOT EXISTS home_meal_ideas_user_created_idx ON home_meal_ideas (user_id, created_at DESC);

@@ -103,7 +103,7 @@ func timeoutByPath(next http.Handler) http.Handler {
 	short := middleware.Timeout(requestTimeout)(next)
 	long := middleware.Timeout(scanTimeout)(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == receiptScanPath || r.URL.Path == dishEstimatePath || r.URL.Path == insightsSummaryPath || isProofPath(r.URL.Path) {
+		if r.URL.Path == inventoryScanPath || r.URL.Path == dishScanPath || r.URL.Path == receiptScanPath || r.URL.Path == dishEstimatePath || r.URL.Path == insightsSummaryPath || r.URL.Path == mealSuggestPath || isProofPath(r.URL.Path) {
 			long.ServeHTTP(w, r)
 			return
 		}
@@ -219,6 +219,7 @@ func newServer(store *Store, config Config, vision *Vision) http.Handler {
 			authed.Put("/body/days", server.putBodyDays)
 			authed.Post("/insights/summary", server.insightsSummary)
 			authed.Post("/meals/import", server.importMeals)
+			authed.Post("/meals/suggest", server.suggestMeals)
 			authed.Put("/meals/{id}", server.replaceMeal)
 			authed.Delete("/meals/{id}", server.removeMeal)
 			authed.Put("/meals/{id}/tick", server.tickMeal)
