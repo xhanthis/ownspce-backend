@@ -32,3 +32,14 @@ ALTER TABLE home_meals ADD COLUMN IF NOT EXISTS dish_id uuid REFERENCES home_dis
 CREATE TABLE IF NOT EXISTS home_body_profiles (user_id uuid PRIMARY KEY REFERENCES home_users(id) ON DELETE CASCADE, height_cm integer CHECK (height_cm BETWEEN 100 AND 250), birth_year integer CHECK (birth_year BETWEEN 1900 AND 2100), sex text CHECK (sex IN ('male', 'female')), goal_weight_g integer CHECK (goal_weight_g BETWEEN 20000 AND 400000), goal_fat_x10 integer CHECK (goal_fat_x10 BETWEEN 10 AND 700), weekly_g integer NOT NULL DEFAULT 500 CHECK (weekly_g BETWEEN 100 AND 1000), health_sync boolean NOT NULL DEFAULT false, updated_at timestamptz NOT NULL DEFAULT now());
 
 CREATE TABLE IF NOT EXISTS home_body_days (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, day date NOT NULL, weight_g integer CHECK (weight_g BETWEEN 20000 AND 400000), fat_x10 integer CHECK (fat_x10 BETWEEN 10 AND 700), weight_source text CHECK (weight_source IN ('health', 'manual')), active_kcal integer NOT NULL DEFAULT 0 CHECK (active_kcal >= 0), basal_kcal integer CHECK (basal_kcal >= 0), exercise_min integer NOT NULL DEFAULT 0 CHECK (exercise_min >= 0), steps integer NOT NULL DEFAULT 0 CHECK (steps >= 0), workouts jsonb NOT NULL DEFAULT '[]'::jsonb, updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, day));
+
+-- Insights: a night's sleep beside the day's steps, a protein target on the profile, and whether a meal was ordered in.
+ALTER TABLE home_body_days ADD COLUMN IF NOT EXISTS sleep_min integer CHECK (sleep_min BETWEEN 0 AND 1440), ADD COLUMN IF NOT EXISTS sleep_source text CHECK (sleep_source IN ('health', 'manual'));
+ALTER TABLE home_body_profiles ADD COLUMN IF NOT EXISTS protein_g integer CHECK (protein_g BETWEEN 20 AND 400);
+ALTER TABLE home_meals ADD COLUMN IF NOT EXISTS ordered_in boolean NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS home_insight_notes (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, figures_hash text NOT NULL, note text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, figures_hash));
+CREATE INDEX IF NOT EXISTS home_insight_notes_user_created_idx ON home_insight_notes (user_id, created_at DESC);
+
+-- AI meal ideas for a day: dishes for empty slots and better options for planned ones, kept per exact input so the same day is never asked twice.
+CREATE TABLE IF NOT EXISTS home_meal_ideas (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, input_hash text NOT NULL, day date NOT NULL, ideas jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, input_hash));
+CREATE INDEX IF NOT EXISTS home_meal_ideas_user_created_idx ON home_meal_ideas (user_id, created_at DESC);

@@ -40,6 +40,7 @@ type Meal struct {
 	Serves      int          `json:"serves"`
 	Ingredients []Ingredient `json:"ingredients"`
 	SortOrder   int          `json:"sortOrder"`
+	OrderedIn   bool         `json:"orderedIn"`
 	TickedBy    []uuid.UUID  `json:"tickedBy"`
 	Ticks       []MealTick   `json:"ticks"`
 	UpdatedAt   time.Time    `json:"updatedAt"`
@@ -68,7 +69,7 @@ func scanMeal(row pgx.CollectableRow) (Meal, error) {
 	var meal Meal
 	var ingredients []byte
 	var ticks []byte
-	if err := row.Scan(&meal.ID, &meal.DishID, &meal.Day, &meal.Slot, &meal.Name, &meal.Kcal, &meal.ProteinG, &meal.CarbsG, &meal.FatG, &meal.Serves, &ingredients, &meal.SortOrder, &ticks, &meal.UpdatedAt); err != nil {
+	if err := row.Scan(&meal.ID, &meal.DishID, &meal.Day, &meal.Slot, &meal.Name, &meal.Kcal, &meal.ProteinG, &meal.CarbsG, &meal.FatG, &meal.Serves, &ingredients, &meal.SortOrder, &meal.OrderedIn, &ticks, &meal.UpdatedAt); err != nil {
 		return Meal{}, err
 	}
 	meal.Ingredients = []Ingredient{}
@@ -101,7 +102,7 @@ func encodeIngredients(ingredients []Ingredient) (string, error) {
 // Args: ctx, from, to (yyyy-mm-dd, validated by the caller)
 // Returns: up to MaxMealsPerRead meals, and whether more existed beyond the cap
 func (s *Store) Meals(ctx context.Context, from, to string) ([]Meal, bool, error) {
-	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, coalesce(jsonb_agg(jsonb_build_object('userId', t.user_id, 'portion', t.portion::float8) ORDER BY t.ticked_at, t.user_id) FILTER (WHERE t.user_id IS NOT NULL), '[]'::jsonb), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.day BETWEEN $1::date AND $2::date GROUP BY m.id ORDER BY m.day DESC, CASE m.slot WHEN 'breakfast' THEN 0 WHEN 'lunch' THEN 1 WHEN 'snack' THEN 2 ELSE 3 END, m.sort_order, m.id LIMIT $3", from, to, MaxMealsPerRead+1)
+	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, m.ordered_in, coalesce(jsonb_agg(jsonb_build_object('userId', t.user_id, 'portion', t.portion::float8) ORDER BY t.ticked_at, t.user_id) FILTER (WHERE t.user_id IS NOT NULL), '[]'::jsonb), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.day BETWEEN $1::date AND $2::date GROUP BY m.id ORDER BY m.day DESC, CASE m.slot WHEN 'breakfast' THEN 0 WHEN 'lunch' THEN 1 WHEN 'snack' THEN 2 ELSE 3 END, m.sort_order, m.id LIMIT $3", from, to, MaxMealsPerRead+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("list meals: %w", err)
 	}
@@ -118,7 +119,7 @@ func (s *Store) Meals(ctx context.Context, from, to string) ([]Meal, bool, error
 // MealByID reads one meal with its ticks.
 // Returns: ErrNotFound when there is no such meal
 func (s *Store) MealByID(ctx context.Context, id uuid.UUID) (Meal, error) {
-	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, coalesce(jsonb_agg(jsonb_build_object('userId', t.user_id, 'portion', t.portion::float8) ORDER BY t.ticked_at, t.user_id) FILTER (WHERE t.user_id IS NOT NULL), '[]'::jsonb), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.id = $1 GROUP BY m.id LIMIT 1", id)
+	rows, err := s.pool.Query(ctx, "SELECT m.id, m.dish_id, to_char(m.day, 'YYYY-MM-DD'), m.slot, m.name, m.kcal, m.protein_g, m.carbs_g, m.fat_g, m.serves, m.ingredients, m.sort_order, m.ordered_in, coalesce(jsonb_agg(jsonb_build_object('userId', t.user_id, 'portion', t.portion::float8) ORDER BY t.ticked_at, t.user_id) FILTER (WHERE t.user_id IS NOT NULL), '[]'::jsonb), m.updated_at FROM home_meals m LEFT JOIN home_meal_ticks t ON t.meal_id = m.id WHERE m.id = $1 GROUP BY m.id LIMIT 1", id)
 	if err != nil {
 		return Meal{}, fmt.Errorf("read meal: %w", err)
 	}
@@ -139,7 +140,7 @@ func (s *Store) ReplaceMeal(ctx context.Context, id uuid.UUID, meal Meal) (Meal,
 	if err != nil {
 		return Meal{}, err
 	}
-	tag, err := s.pool.Exec(ctx, "UPDATE home_meals SET day = $2::date, slot = $3, name = $4, kcal = $5, protein_g = $6, carbs_g = $7, fat_g = $8, serves = $9, ingredients = $10::jsonb, updated_at = now() WHERE id = $1", id, meal.Day, meal.Slot, meal.Name, meal.Kcal, meal.ProteinG, meal.CarbsG, meal.FatG, meal.Serves, ingredients)
+	tag, err := s.pool.Exec(ctx, "UPDATE home_meals SET day = $2::date, slot = $3, name = $4, kcal = $5, protein_g = $6, carbs_g = $7, fat_g = $8, serves = $9, ingredients = $10::jsonb, ordered_in = $11, updated_at = now() WHERE id = $1", id, meal.Day, meal.Slot, meal.Name, meal.Kcal, meal.ProteinG, meal.CarbsG, meal.FatG, meal.Serves, ingredients, meal.OrderedIn)
 	if err != nil {
 		return Meal{}, fmt.Errorf("replace meal: %w", err)
 	}
@@ -230,7 +231,7 @@ func (s *Store) ImportMeals(ctx context.Context, meals []Meal, actor uuid.UUID, 
 			if err != nil {
 				return err
 			}
-			batch.Queue("INSERT INTO home_meals (id, day, slot, name, kcal, protein_g, carbs_g, fat_g, serves, ingredients, sort_order, created_by, dish_id) VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, (SELECT d.id FROM home_dishes d WHERE d.name_key = $13))", uuid.New(), meal.Day, meal.Slot, meal.Name, meal.Kcal, meal.ProteinG, meal.CarbsG, meal.FatG, meal.Serves, ingredients, index, actor, dishKey(meal.Name))
+			batch.Queue("INSERT INTO home_meals (id, day, slot, name, kcal, protein_g, carbs_g, fat_g, serves, ingredients, sort_order, created_by, dish_id, ordered_in) VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, (SELECT d.id FROM home_dishes d WHERE d.name_key = $13), $14)", uuid.New(), meal.Day, meal.Slot, meal.Name, meal.Kcal, meal.ProteinG, meal.CarbsG, meal.FatG, meal.Serves, ingredients, index, actor, dishKey(meal.Name), meal.OrderedIn)
 		}
 		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
 			return fmt.Errorf("insert meals: %w", err)

@@ -3,11 +3,13 @@ package home
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 )
 
@@ -42,6 +44,7 @@ type mealBody struct {
 	FatG        int              `json:"fatG"`
 	Serves      int              `json:"serves"`
 	Ingredients []ingredientBody `json:"ingredients"`
+	OrderedIn   bool             `json:"orderedIn"`
 }
 
 // validate checks one meal and returns it trimmed. A missing serves count means two.
@@ -81,7 +84,7 @@ func (b mealBody) validate() (Meal, error) {
 		}
 		ingredients = append(ingredients, ingredient)
 	}
-	return Meal{Day: b.Day, Slot: b.Slot, Name: name, Kcal: b.Kcal, ProteinG: b.ProteinG, CarbsG: b.CarbsG, FatG: b.FatG, Serves: serves, Ingredients: ingredients}, nil
+	return Meal{Day: b.Day, Slot: b.Slot, Name: name, Kcal: b.Kcal, ProteinG: b.ProteinG, CarbsG: b.CarbsG, FatG: b.FatG, Serves: serves, Ingredients: ingredients, OrderedIn: b.OrderedIn}, nil
 }
 
 func validLink(link string) bool {
@@ -204,8 +207,9 @@ func (s *Server) removeMeal(w http.ResponseWriter, r *http.Request) {
 
 // tickBody says who ate and how much. Both are optional: no body means the signed-in member at one plate.
 type tickBody struct {
-	UserID  *uuid.UUID `json:"userId"`
-	Portion float64    `json:"portion"`
+	UserID    *uuid.UUID `json:"userId"`
+	Portion   float64    `json:"portion"`
+	OrderedIn *bool      `json:"orderedIn"`
 }
 
 // validate fills the defaults in and refuses a plate size the app does not offer.
@@ -271,6 +275,11 @@ func (s *Server) tickMeal(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, r, err)
 		return
+	}
+	if ate {
+		if err := s.store.MarkOrderedIn(r.Context(), id, body.OrderedIn); err != nil {
+			log.Printf("request %s: meal %s ticked, ordered-in mark not saved: %v", middleware.GetReqID(r.Context()), id, err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

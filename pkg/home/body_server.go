@@ -16,6 +16,9 @@ const (
 	maxBasalKcal    = 10000
 	maxWorkoutKcal  = 10000
 	maxExerciseMin  = 1440
+	maxSleepMin     = 1440
+	minProteinG     = 20
+	maxProteinG     = 400
 	maxSteps        = 200000
 	minWeightG      = 20000
 	maxWeightG      = 400000
@@ -69,6 +72,7 @@ type bodyProfileBody struct {
 	GoalWeightG *int    `json:"goalWeightG"`
 	GoalFatX10  *int    `json:"goalFatX10"`
 	WeeklyG     int     `json:"weeklyG"`
+	ProteinG    *int    `json:"proteinG"`
 	HealthSync  bool    `json:"healthSync"`
 }
 
@@ -103,8 +107,11 @@ func (s *Server) putBodyProfile(w http.ResponseWriter, r *http.Request) {
 	case body.WeeklyG < 100 || body.WeeklyG > 1000:
 		writeError(w, r, badRequest("pace must be 100 to 1000 g a week"))
 		return
+	case !between(body.ProteinG, minProteinG, maxProteinG):
+		writeError(w, r, badRequest(fmt.Sprintf("protein target must be %d to %d g a day", minProteinG, maxProteinG)))
+		return
 	}
-	saved, err := s.store.SaveBodyProfile(r.Context(), actor(r).ID, BodyProfile{HeightCm: body.HeightCm, BirthYear: body.BirthYear, Sex: body.Sex, GoalWeightG: body.GoalWeightG, GoalFatX10: body.GoalFatX10, WeeklyG: body.WeeklyG, HealthSync: body.HealthSync})
+	saved, err := s.store.SaveBodyProfile(r.Context(), actor(r).ID, BodyProfile{HeightCm: body.HeightCm, BirthYear: body.BirthYear, Sex: body.Sex, GoalWeightG: body.GoalWeightG, GoalFatX10: body.GoalFatX10, WeeklyG: body.WeeklyG, ProteinG: body.ProteinG, HealthSync: body.HealthSync})
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -120,6 +127,7 @@ type bodyDayBody struct {
 	BasalKcal   *int       `json:"basalKcal"`
 	ExerciseMin *int       `json:"exerciseMin"`
 	Steps       *int       `json:"steps"`
+	SleepMin    *int       `json:"sleepMin"`
 	Workouts    *[]Workout `json:"workouts"`
 }
 
@@ -166,12 +174,15 @@ func (s *Server) putBodyDays(w http.ResponseWriter, r *http.Request) {
 		case !between(day.ExerciseMin, 0, maxExerciseMin) || !between(day.Steps, 0, maxSteps):
 			writeError(w, r, badRequest(day.Day+": minutes or steps out of range"))
 			return
+		case !between(day.SleepMin, 0, maxSleepMin):
+			writeError(w, r, badRequest(day.Day+": sleep must be 0 to 1440 minutes"))
+			return
 		case day.FatX10 != nil && day.WeightG == nil:
 			writeError(w, r, badRequest(day.Day+": body fat needs a weight"))
 			return
 		}
 		seen[day.Day] = true
-		patch := BodyDayPatch{Day: day.Day, WeightG: day.WeightG, FatX10: day.FatX10, ActiveKcal: day.ActiveKcal, BasalKcal: day.BasalKcal, ExerciseMin: day.ExerciseMin, Steps: day.Steps}
+		patch := BodyDayPatch{Day: day.Day, WeightG: day.WeightG, FatX10: day.FatX10, ActiveKcal: day.ActiveKcal, BasalKcal: day.BasalKcal, ExerciseMin: day.ExerciseMin, Steps: day.Steps, SleepMin: day.SleepMin}
 		if day.Workouts != nil {
 			if len(*day.Workouts) > maxWorkoutsADay {
 				writeError(w, r, badRequest(fmt.Sprintf("%s: at most %d workouts", day.Day, maxWorkoutsADay)))
