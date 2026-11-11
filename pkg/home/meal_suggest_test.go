@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -15,25 +16,50 @@ import (
 	"github.com/google/uuid"
 )
 
+// modelLog keeps the text of every request a fake model got: the system prompt and each message, one entry per call.
+type modelLog struct {
+	mu       sync.Mutex
+	requests []string
+}
+
+func (l *modelLog) all() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string(nil), l.requests...)
+}
+
 // countingModel answers every Messages call with reply and counts the calls, so a test can tell a cached answer
-// from a fresh one.
-func countingModel(t *testing.T, reply string) (*Vision, *atomic.Int32, *string) {
+// from a fresh one. Calls may come at once; each one's text lands in the log.
+func countingModel(t *testing.T, reply string) (*Vision, *atomic.Int32, *modelLog) {
 	t.Helper()
 	var calls atomic.Int32
-	var prompt string
+	seen := &modelLog{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		var request struct {
+			System []struct {
+				Text string `json:"text"`
+			} `json:"system"`
 			Messages []struct {
+				Role    string `json:"role"`
 				Content []struct {
 					Text string `json:"text"`
 				} `json:"content"`
 			} `json:"messages"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&request)
-		if len(request.Messages) > 0 && len(request.Messages[0].Content) > 0 {
-			prompt = request.Messages[0].Content[0].Text
+		var text strings.Builder
+		for _, block := range request.System {
+			text.WriteString("system: " + block.Text + "\n")
 		}
+		for _, message := range request.Messages {
+			for _, block := range message.Content {
+				text.WriteString(message.Role + ": " + block.Text + "\n")
+			}
+		}
+		seen.mu.Lock()
+		seen.requests = append(seen.requests, text.String())
+		seen.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id": "msg_test", "type": "message", "role": "assistant", "model": visionModel,
@@ -43,7 +69,7 @@ func countingModel(t *testing.T, reply string) (*Vision, *atomic.Int32, *string)
 		})
 	}))
 	t.Cleanup(server.Close)
-	return &Vision{client: anthropic.NewClient(option.WithAPIKey("test-token-not-real"), option.WithBaseURL(server.URL), option.WithMaxRetries(0))}, &calls, &prompt
+	return &Vision{client: anthropic.NewClient(option.WithAPIKey("test-token-not-real"), option.WithBaseURL(server.URL), option.WithMaxRetries(0))}, &calls, seen
 }
 
 func idea(target, value, name string, kcal int) string {
@@ -64,17 +90,20 @@ func TestSuggestMealsKeepsOnlyIdeasThatFitTheDay(t *testing.T) {
 		idea("mealId", dal.String(), "dal RICE", 450),
 		idea("mealId", "not-an-id", "Upma", 300),
 	}, ",") + `]}`
-	vision, _, prompt := countingModel(t, reply)
+	vision, calls, seen := countingModel(t, reply)
 	input := suggestInput{Day: "2100-01-02", Dishes: []suggestDish{{ID: biryani, Slot: "lunch", Name: "Veg Biryani", Kcal: 540, ProteinG: 12}}, Goal: map[string]any{"goalWeightKg": 70.0}, Favourites: []string{"Pav Bhaji"}}
 
-	ideas, err := vision.SuggestMeals(context.Background(), input, []string{"breakfast", "dinner"}, []uuid.UUID{biryani, dal})
+	ideas, err := vision.SuggestMeals(context.Background(), input, []string{"breakfast", "dinner"}, []uuid.UUID{biryani, dal}, ideasPerSlot, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	usable := ideas.keepUsable([]string{"breakfast", "dinner"}, map[uuid.UUID]string{biryani: "Veg Biryani", dal: "Dal rice"})
 
-	if len(usable.Fills) != 1 || usable.Fills[0].Slot != "breakfast" || usable.Fills[0].Name != "Moong chilla" {
-		t.Fatalf("one breakfast, the first; a filled lunch and a 9000 kcal dinner are dropped: %+v", usable.Fills)
+	if len(usable.Fills) != 2 || usable.Fills[0].Name != "Moong chilla" || usable.Fills[1].Name != "Poha" || usable.Fills[1].Slot != "breakfast" {
+		t.Fatalf("both breakfasts in order; a filled lunch and a 9000 kcal dinner are dropped: %+v", usable.Fills)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("one call per empty slot and one for the swaps, got %d", calls.Load())
 	}
 	fill := usable.Fills[0]
 	if fill.Why != "lighter, same comfort" || fill.Serves != 2 || len(fill.Ingredients) != 1 || fill.MealID != nil {
@@ -83,9 +112,10 @@ func TestSuggestMealsKeepsOnlyIdeasThatFitTheDay(t *testing.T) {
 	if len(usable.Swaps) != 1 || *usable.Swaps[0].MealID != biryani || usable.Swaps[0].Name != "Veg pulao with raita" || usable.Swaps[0].Slot != "" {
 		t.Fatalf("one swap for the biryani; eaten, same-name and bad ids are dropped: %+v", usable.Swaps)
 	}
-	for _, want := range []string{`["breakfast","dinner"]`, biryani.String(), `"goalWeightKg":70`, `["Pav Bhaji"]`, "2100-01-02"} {
-		if !strings.Contains(*prompt, want) {
-			t.Fatalf("prompt is missing %s: %s", want, *prompt)
+	prompts := strings.Join(seen.all(), "\n---\n")
+	for _, want := range []string{`slots, suggest 3 different real home dishes to fill it: ["breakfast"]`, `fill it: ["dinner"]`, `fill it: []`, `Ids: ["` + biryani.String(), `"goalWeightKg":70`, `["Pav Bhaji"]`, "2100-01-02", "Never suggest any of these dishes again: []"} {
+		if !strings.Contains(prompts, want) {
+			t.Fatalf("prompts are missing %s: %s", want, prompts)
 		}
 	}
 }
@@ -97,7 +127,7 @@ func TestSuggestMealsFailsOnARefusalOrJunk(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			vision, _ := fakeModel(t, tc.reply, tc.stop)
-			if _, err := vision.SuggestMeals(context.Background(), suggestInput{Day: "2100-01-02"}, []string{"lunch"}, nil); err != errSuggestFailed {
+			if _, err := vision.SuggestMeals(context.Background(), suggestInput{Day: "2100-01-02"}, []string{"lunch"}, nil, ideasPerSlot, nil); err != errSuggestFailed {
 				t.Fatalf("want errSuggestFailed, got %v", err)
 			}
 		})
@@ -137,7 +167,7 @@ func TestSuggestRouteAsksOnceServesTheCacheAndDropsEatenDishes(t *testing.T) {
 	}
 
 	status, again := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask)
-	if status != http.StatusOK || again["fresh"] != false || len(again["swaps"].([]any)) != 1 || calls.Load() != 1 {
+	if status != http.StatusOK || again["fresh"] != false || len(again["swaps"].([]any)) != 1 || calls.Load() != 5 {
 		t.Fatalf("the same ask comes from the cache: %d %v, %d calls", status, again, calls.Load())
 	}
 
@@ -145,12 +175,12 @@ func TestSuggestRouteAsksOnceServesTheCacheAndDropsEatenDishes(t *testing.T) {
 		t.Fatalf("tick: %d", status)
 	}
 	status, eaten := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask)
-	if status != http.StatusOK || len(eaten["swaps"].([]any)) != 0 || len(eaten["fills"].([]any)) != 2 || calls.Load() != 1 {
+	if status != http.StatusOK || len(eaten["swaps"].([]any)) != 0 || len(eaten["fills"].([]any)) != 2 || calls.Load() != 5 {
 		t.Fatalf("a tick needs no new ask, and an eaten dish is not swapped: %d %v, %d calls", status, eaten, calls.Load())
 	}
 
 	past := map[string]any{"day": "2001-01-01"}
-	if status, body := call(t, server, http.MethodPost, "/v1/meals/suggest", token, past); status != http.StatusOK || len(body["fills"].([]any)) != 0 || calls.Load() != 1 {
+	if status, body := call(t, server, http.MethodPost, "/v1/meals/suggest", token, past); status != http.StatusOK || len(body["fills"].([]any)) != 0 || calls.Load() != 5 {
 		t.Fatalf("a past day gets no ideas and no model call: %d %v", status, body)
 	}
 	for _, bad := range []map[string]any{{"day": "tomorrow"}, {"day": day, "goal": map[string]any{"nested": map[string]any{"x": 1}}}} {
@@ -160,5 +190,75 @@ func TestSuggestRouteAsksOnceServesTheCacheAndDropsEatenDishes(t *testing.T) {
 	}
 	if status, _ := call(t, server, http.MethodPost, "/v1/meals/suggest", "", ask); status != http.StatusUnauthorized {
 		t.Fatalf("no token: %d", status)
+	}
+}
+
+func TestSuggestAgainSwapsOneIdeaInPlaceAndKeepsIt(t *testing.T) {
+	store := testStore(t)
+	username, password := testUser(t, store)
+	first, _, _ := countingModel(t, `{"fills":[`+idea("slot", "breakfast", "Moong chilla", 280)+`,`+idea("slot", "breakfast", "Poha", 300)+`,`+idea("slot", "dinner", "Palak khichdi", 420)+`],"swaps":[]}`)
+	server := httptest.NewServer(newServer(store, Config{AllowLocalhost: true}, first))
+	t.Cleanup(server.Close)
+	token := signIn(t, server, username, password)
+	user, err := store.UserByUsername(context.Background(), username)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := testDays(1)[0]
+	ask := map[string]any{"day": day, "goal": map[string]any{"proteinTargetG": 117}}
+	if status, body := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask); status != http.StatusOK || len(body["fills"].([]any)) != 3 {
+		t.Fatalf("first ask: %d %v", status, body)
+	}
+	again := func(server *httptest.Server, slot, name string) (int, map[string]any) {
+		return call(t, server, http.MethodPost, "/v1/meals/suggest/again", token, map[string]any{"day": day, "goal": ask["goal"], "slot": slot, "name": name})
+	}
+
+	if status, body := again(server, "breakfast", "Moong chilla"); status != http.StatusBadGateway {
+		t.Fatalf("an answer that only repeats what is shown is a failure: %d %v", status, body)
+	}
+	if used, _ := store.AIUsesToday(context.Background(), user.ID, aiUseIdeaAgain); used != 0 {
+		t.Fatalf("a failed ask is not used up: %d", used)
+	}
+
+	fresh, calls, seen := countingModel(t, `{"fills":[`+idea("slot", "breakfast", "Poha", 300)+`,`+idea("slot", "breakfast", "Besan chilla", 260)+`],"swaps":[]}`)
+	swapper := httptest.NewServer(newServer(store, Config{AllowLocalhost: true}, fresh))
+	t.Cleanup(swapper.Close)
+	status, body := again(swapper, "breakfast", "moong CHILLA")
+	fills := body["fills"].([]any)
+	if status != http.StatusOK || calls.Load() != 1 || len(fills) != 3 || fills[0].(map[string]any)["name"] != "Besan chilla" || fills[1].(map[string]any)["name"] != "Poha" || fills[2].(map[string]any)["name"] != "Palak khichdi" {
+		t.Fatalf("the new dish takes the old one's place and skips one already shown: %d %v", status, body)
+	}
+	if prompt := seen.all()[0]; !strings.Contains(prompt, `suggest 1 different real home dishes to fill it: ["breakfast"]`) || !strings.Contains(prompt, `Never suggest any of these dishes again: ["Moong chilla","Poha"]`) {
+		t.Fatalf("prompt asks for one new breakfast and names what is shown: %s", prompt)
+	}
+	if status, kept := call(t, swapper, http.MethodPost, "/v1/meals/suggest", token, ask); status != http.StatusOK || kept["fills"].([]any)[0].(map[string]any)["name"] != "Besan chilla" || calls.Load() != 1 {
+		t.Fatalf("the card keeps the new dish from the cache: %d %v", status, kept)
+	}
+
+	for name, tc := range map[string]struct {
+		slot, idea string
+		want       int
+	}{
+		"an idea no longer shown": {"breakfast", "Moong chilla", http.StatusConflict},
+		"a slot with no ideas":    {"lunch", "Dal rice", http.StatusConflict},
+		"a slot that is not one":  {"brunch", "Poha", http.StatusBadRequest},
+		"no idea named":           {"breakfast", "", http.StatusBadRequest},
+	} {
+		if status, body := again(swapper, tc.slot, tc.idea); status != tc.want {
+			t.Fatalf("%s: want %d, got %d %v", name, tc.want, status, body)
+		}
+	}
+
+	heldByEarlierAsks := 2
+	for range maxIdeaAgainADay - heldByEarlierAsks {
+		use, err := store.ReserveAIUse(context.Background(), user.ID, aiUseIdeaAgain, maxIdeaAgainADay)
+		if err != nil || use == uuid.Nil {
+			t.Fatalf("reserve: %v %v", use, err)
+		}
+		_ = store.FinishAIUse(context.Background(), use)
+	}
+	before := calls.Load()
+	if status, body := again(swapper, "breakfast", "Poha"); status != http.StatusTooManyRequests || body["error"].(map[string]any)["code"] != "idea_limit" || calls.Load() != before {
+		t.Fatalf("past the day's cap: %d %v", status, body)
 	}
 }
