@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -19,27 +20,33 @@ import (
 
 const (
 	mealSuggestPath      = "/v1/meals/suggest"
+	mealIdeaAgainPath    = "/v1/meals/suggest/again"
 	maxSuggestCallsADay  = 20
+	maxIdeaAgainADay     = 30
 	maxSuggestFavourites = 10
 	maxSuggestWhy        = 140
+	ideasPerSlot         = 3
 	suggestMaxTokens     = 3000
 )
 
-// suggestSlots are the slots an empty day is filled in; a snack or late-night plate is never pushed on anyone.
-var suggestSlots = []string{"breakfast", "lunch", "dinner"}
+// suggestSlots are the slots an empty day is filled in, in the order of the day.
+var suggestSlots = []string{"breakfast", "lunch", "snack", "dinner", "late"}
 
 var errSuggestUnavailable = apiError{status: http.StatusServiceUnavailable, Code: "suggest_unavailable", Message: "meal suggestions are not set up on this server"}
 var errSuggestFailed = apiError{status: http.StatusBadGateway, Code: "suggest_failed", Message: "could not think of suggestions this time"}
+var errIdeaAgainLimit = apiError{status: http.StatusTooManyRequests, Code: "idea_limit", Message: "that is enough new ideas for today, try again tomorrow"}
+var errIdeaGone = apiError{status: http.StatusConflict, Code: "idea_gone", Message: "that idea is no longer on the day, pull to refresh"}
 
 const suggestPrompt = `You plan meals for one person who cooks at home in Pune, India. The goal is to eat better, healthier and tastier while reaching their body goal.
 Their goal and figures, as JSON (weights in kilograms, food in kilocalories and grams; missing keys are unknown): %s
 Dishes they eat most, so you know their taste: %s
 Their plan for %s, one entry per dish with its id, slot, name and the calories and protein of one plate: %s
 
-1. For each of these empty slots, suggest ONE real home dish to fill it: %s
+1. For each of these empty slots, suggest %d different real home dishes to fill it: %s
 2. For each dish whose id is in this list, suggest a swap ONLY when a clearly better option exists: healthier for their goal (fewer calories, or more protein for a similar plate) and still tasty and close in spirit, the way Veg Biryani becomes Veg Pulao with raita. When the dish is already a good choice, leave it out. Ids: %s
+Never suggest any of these dishes again: %s
 
-Keep the whole day near what their goal needs and push protein toward the target. Follow the diet their dishes show: if no meat, fish or egg appears, suggest none. Prefer dishes they already like or close cousins of them.
+Keep the whole day near what their goal needs and push protein toward the target: size each idea to the calories and protein the plan still leaves. Follow the diet their dishes show: if no meat, fish or egg appears, suggest none. Prefer dishes they already like or close cousins of them. "snack" is evening tea time; "late" is a late-night bite, so keep it light, under 200 kcal.
 Give calories, protein, carbs and fat for ONE normal adult serving. List the ingredients to cook it for TWO people with an amount the kitchen can count (grams or kilograms, millilitres or litres, or pieces), skipping spices, salt, oil and other pantry staples, at most 12. "name" is a plain dish name of at most 50 characters. "why" is one short plain sentence of at most 100 characters naming the gain, such as "120 kcal lighter, same comfort". Use only the slots and ids given above; empty lists are fine.`
 
 // suggestSchema is the JSON a suggestion answer must follow: fills for empty slots and swaps for planned dishes,
@@ -118,20 +125,26 @@ func openings(meals []Meal, userID uuid.UUID) ([]string, map[uuid.UUID]string) {
 	return empty, open
 }
 
-// keepUsable drops what no longer fits the day: a fill for a slot that now has a dish, a swap for a dish that is
-// gone or already eaten, a second idea for the same slot or dish, and a swap that only repeats the dish's name.
+// keepUsable drops what no longer fits the day: a fill for a slot that now has a dish, more than ideasPerSlot fills
+// or a repeated dish in one slot, a swap for a dish that is gone or already eaten, a second swap for the same dish,
+// and a swap that only repeats the dish's name.
 func (ideas MealIdeas) keepUsable(empty []string, open map[uuid.UUID]string) MealIdeas {
 	usable := MealIdeas{Fills: []MealIdea{}, Swaps: []MealIdea{}}
 	wanted := set(empty...)
+	perSlot := map[string]int{}
+	seen := map[string]bool{}
 	pending := make(map[uuid.UUID]string, len(open))
 	for id, name := range open {
 		pending[id] = name
 	}
 	for _, fill := range ideas.Fills {
-		if wanted[fill.Slot] {
-			usable.Fills = append(usable.Fills, fill)
-			delete(wanted, fill.Slot)
+		key := fill.Slot + "|" + strings.ToLower(fill.Name)
+		if !wanted[fill.Slot] || perSlot[fill.Slot] == ideasPerSlot || seen[key] {
+			continue
 		}
+		usable.Fills = append(usable.Fills, fill)
+		perSlot[fill.Slot]++
+		seen[key] = true
 	}
 	for _, swap := range ideas.Swaps {
 		if swap.MealID == nil {
@@ -175,22 +188,74 @@ func ideaFromReply(raw json.RawMessage) (MealIdea, error) {
 	return idea, nil
 }
 
-// SuggestMeals asks the model for fills and swaps on one day, and keeps only ideas that pass a meal's checks.
-// Args: input (the day, its dishes, the goal and favourite dishes), empty (slots to fill), swappable (dish ids)
-// Returns: the parsed ideas (not yet matched to the day); errSuggestFailed when the model errors, refuses or
-// answers nothing parseable
-func (v *Vision) SuggestMeals(ctx context.Context, input suggestInput, empty []string, swappable []uuid.UUID) (MealIdeas, error) {
+// SuggestMeals asks the model for fills and swaps on one day, and keeps only ideas that pass a meal's checks. Each
+// empty slot and the swaps go out as their own call, all at once, so a day with five open slots takes as long as one.
+// Args: input (the day, its dishes, the goal and favourite dishes), empty (slots to fill), swappable (dish ids),
+// count (fills per slot), avoid (dish names the answer must not repeat)
+// Returns: the parsed ideas (not yet matched to the day); errSuggestFailed only when every call fails
+func (v *Vision) SuggestMeals(ctx context.Context, input suggestInput, empty []string, swappable []uuid.UUID, count int, avoid []string) (MealIdeas, error) {
+	type ask struct {
+		slots []string
+		ids   []uuid.UUID
+	}
+	asks := make([]ask, 0, len(empty)+1)
+	for _, slot := range empty {
+		asks = append(asks, ask{slots: []string{slot}, ids: []uuid.UUID{}})
+	}
+	if len(swappable) > 0 {
+		asks = append(asks, ask{slots: []string{}, ids: swappable})
+	}
+	answers := make([]MealIdeas, len(asks))
+	failures := make([]error, len(asks))
+	var wait sync.WaitGroup
+	for index, one := range asks {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			answers[index], failures[index] = v.askIdeas(ctx, input, one.slots, one.ids, count, avoid)
+		}()
+	}
+	wait.Wait()
+	ideas := MealIdeas{Fills: []MealIdea{}, Swaps: []MealIdea{}}
+	answered := 0
+	for index, one := range asks {
+		if failures[index] != nil {
+			continue
+		}
+		answered++
+		for _, fill := range answers[index].Fills {
+			if len(one.slots) == 1 && fill.Slot == one.slots[0] {
+				ideas.Fills = append(ideas.Fills, fill)
+			}
+		}
+		if len(one.ids) > 0 {
+			ideas.Swaps = append(ideas.Swaps, answers[index].Swaps...)
+		}
+	}
+	if answered == 0 && len(asks) > 0 {
+		return MealIdeas{}, errSuggestFailed
+	}
+	return ideas, nil
+}
+
+// askIdeas is one model call of SuggestMeals.
+// Returns: the parsed fills and swaps; errSuggestFailed when the model errors, refuses or answers nothing parseable
+func (v *Vision) askIdeas(ctx context.Context, input suggestInput, empty []string, swappable []uuid.UUID, count int, avoid []string) (MealIdeas, error) {
 	goal, _ := json.Marshal(input.Goal)
 	favourites, _ := json.Marshal(input.Favourites)
 	dishes, _ := json.Marshal(input.Dishes)
 	slots, _ := json.Marshal(empty)
 	ids, _ := json.Marshal(swappable)
+	if avoid == nil {
+		avoid = []string{}
+	}
+	skip, _ := json.Marshal(avoid)
 	started := time.Now()
 	response, err := v.client.Messages.New(ctx, anthropic.MessageNewParams{
 		Model:        visionModel,
 		MaxTokens:    suggestMaxTokens,
 		OutputConfig: anthropic.OutputConfigParam{Effort: anthropic.OutputConfigEffortLow, Format: anthropic.JSONOutputFormatParam{Schema: suggestSchema}},
-		Messages:     []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(fmt.Sprintf(suggestPrompt, goal, favourites, input.Day, dishes, slots, ids)))},
+		Messages:     []anthropic.MessageParam{anthropic.NewUserMessage(anthropic.NewTextBlock(fmt.Sprintf(suggestPrompt, goal, favourites, input.Day, dishes, count, slots, ids, skip)))},
 	})
 	if err != nil {
 		log.Printf("meal suggest: model call failed after %s: %v", time.Since(started).Round(time.Millisecond), err)
@@ -228,12 +293,69 @@ type suggestBody struct {
 	Day        string         `json:"day"`
 	Goal       map[string]any `json:"goal"`
 	Favourites []string       `json:"favourites"`
+	Slot       string         `json:"slot"`
+	Name       string         `json:"name"`
+}
+
+// suggestDay is one suggest request read against the plan: what to ask, its cache key, and what is open.
+type suggestDay struct {
+	input suggestInput
+	hash  string
+	slots []string
+	open  map[uuid.UUID]string
+	meals []Meal
+}
+
+// readSuggest validates a suggest body and reads the day's plan. The dishes always come from the plan, never from
+// the app, so the same day, dishes, goal and favourites give the same cache key.
+// Returns: the day, or nil with nothing to do (a past day, or every slot filled and every dish eaten); a 400 for a
+// bad day or goal
+func (s *Server) readSuggest(r *http.Request, body suggestBody) (*suggestDay, error) {
+	day, err := time.Parse("2006-01-02", body.Day)
+	if err != nil {
+		return nil, badRequest("day must be YYYY-MM-DD")
+	}
+	goal := map[string]any{}
+	if len(body.Goal) > 0 {
+		encoded, err := validateFigures(body.Goal)
+		if err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(encoded, &goal)
+	}
+	favourites := []string{}
+	for _, name := range body.Favourites {
+		name = strings.Join(strings.Fields(name), " ")
+		if textBetween(name, 1, maxDishNameText) && len(favourites) < maxSuggestFavourites {
+			favourites = append(favourites, name)
+		}
+	}
+	if day.Before(time.Now().UTC().AddDate(0, 0, -1).Truncate(24 * time.Hour)) {
+		return nil, nil
+	}
+	meals, _, err := s.store.Meals(r.Context(), body.Day, body.Day)
+	if err != nil {
+		return nil, err
+	}
+	slots, open := openings(meals, actor(r).ID)
+	if len(slots) == 0 && len(open) == 0 {
+		return nil, nil
+	}
+	input := suggestInput{Day: body.Day, Dishes: make([]suggestDish, 0, len(meals)), Goal: goal, Favourites: favourites}
+	for _, meal := range meals {
+		input.Dishes = append(input.Dishes, suggestDish{ID: meal.ID, Slot: meal.Slot, Name: meal.Name, Kcal: meal.Kcal, ProteinG: meal.ProteinG})
+	}
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode suggest input: %w", err)
+	}
+	return &suggestDay{input: input, hash: figuresHash(encoded), slots: slots, open: open, meals: meals}, nil
 }
 
 // suggestMeals answers a day card: POST /v1/meals/suggest {day, goal, favourites} → {fills, swaps, fresh}.
-// The day's dishes are read from the plan, never trusted from the app. The same day, dishes, goal and favourites
-// are asked once and then served from the store; a member gets at most maxSuggestCallsADay fresh answers a day,
-// after which an uncached day answers with no ideas.
+// Every empty slot gets up to ideasPerSlot fills. The same day, dishes, goal and favourites are asked once and then
+// served from the store; a member gets at most maxSuggestCallsADay fresh answers a day, after which an uncached day
+// answers with no ideas.
 // Handles: no key on the server (503), a bad day or goal (400), a past day or a full day (no ideas, no model call),
 // a model failure (502)
 func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
@@ -246,57 +368,19 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	day, err := time.Parse("2006-01-02", body.Day)
-	if err != nil {
-		writeError(w, r, badRequest("day must be YYYY-MM-DD"))
-		return
-	}
-	goal := map[string]any{}
-	if len(body.Goal) > 0 {
-		encoded, err := validateFigures(body.Goal)
-		if err != nil {
-			writeError(w, r, err)
-			return
-		}
-		_ = json.Unmarshal(encoded, &goal)
-	}
-	favourites := []string{}
-	for _, name := range body.Favourites {
-		name = strings.Join(strings.Fields(name), " ")
-		if textBetween(name, 1, maxDishNameText) && len(favourites) < maxSuggestFavourites {
-			favourites = append(favourites, name)
-		}
-	}
-
-	empty := MealIdeas{Fills: []MealIdea{}, Swaps: []MealIdea{}}
-	if day.Before(time.Now().UTC().AddDate(0, 0, -1).Truncate(24 * time.Hour)) {
-		writeJSON(w, http.StatusOK, map[string]any{"fills": empty.Fills, "swaps": empty.Swaps, "fresh": false})
-		return
-	}
-	user := actor(r).ID
-	meals, _, err := s.store.Meals(r.Context(), body.Day, body.Day)
+	plan, err := s.readSuggest(r, body)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	slots, open := openings(meals, user)
-	if len(slots) == 0 && len(open) == 0 {
+	empty := MealIdeas{Fills: []MealIdea{}, Swaps: []MealIdea{}}
+	if plan == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"fills": empty.Fills, "swaps": empty.Swaps, "fresh": false})
 		return
 	}
-
-	input := suggestInput{Day: body.Day, Dishes: make([]suggestDish, 0, len(meals)), Goal: goal, Favourites: favourites}
-	for _, meal := range meals {
-		input.Dishes = append(input.Dishes, suggestDish{ID: meal.ID, Slot: meal.Slot, Name: meal.Name, Kcal: meal.Kcal, ProteinG: meal.ProteinG})
-	}
-	encoded, err := json.Marshal(input)
-	if err != nil {
-		writeError(w, r, fmt.Errorf("encode suggest input: %w", err))
-		return
-	}
-	hash := figuresHash(encoded)
-	if cached, err := s.store.MealIdeas(r.Context(), user, hash); err == nil {
-		usable := cached.keepUsable(slots, open)
+	user := actor(r).ID
+	if cached, err := s.store.MealIdeas(r.Context(), user, plan.hash); err == nil {
+		usable := cached.keepUsable(plan.slots, plan.open)
 		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false})
 		return
 	} else if !errors.Is(err, ErrNotFound) {
@@ -313,24 +397,118 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	swappable := make([]uuid.UUID, 0, len(open))
-	for _, meal := range meals {
-		if _, ok := open[meal.ID]; ok {
+	swappable := make([]uuid.UUID, 0, len(plan.open))
+	for _, meal := range plan.meals {
+		if _, ok := plan.open[meal.ID]; ok {
 			swappable = append(swappable, meal.ID)
 		}
 	}
-	ideas, err := s.vision.SuggestMeals(r.Context(), input, slots, swappable)
+	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, plan.slots, swappable, ideasPerSlot, nil)
 	if err != nil {
 		log.Printf("[%s] meal suggest failed", middleware.GetReqID(r.Context()))
 		writeError(w, r, err)
 		return
 	}
-	usable := ideas.keepUsable(slots, open)
-	if err := s.store.SaveMealIdeas(r.Context(), user, hash, body.Day, usable); err != nil {
+	usable := ideas.keepUsable(plan.slots, plan.open)
+	if err := s.store.SaveMealIdeas(r.Context(), user, plan.hash, body.Day, usable); err != nil {
 		writeError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": true})
+}
+
+// suggestAgain swaps one idea I did not like for a new one in the same slot:
+// POST /v1/meals/suggest/again {day, goal, favourites, slot, name} → {fills, swaps, fresh}. The body is the same one
+// the day card asked with, so it finds the same kept answer; the new dish takes the old one's place there, so the
+// card keeps it after a reload. The model is told every dish already in that slot, so it never offers one again.
+// Handles: no key (503), a bad body (400), an idea or slot no longer on the day (409), maxIdeaAgainADay used (429),
+// a model failure or an answer that only repeats (502; nothing is used up)
+func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
+	if s.vision == nil {
+		writeError(w, r, errSuggestUnavailable)
+		return
+	}
+	var body suggestBody
+	if err := decode(r, &body); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if !mealSlots[body.Slot] || !textBetween(body.Name, 1, maxDishNameText) {
+		writeError(w, r, badRequest("slot and name must name the idea to replace"))
+		return
+	}
+	plan, err := s.readSuggest(r, body)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if plan == nil {
+		writeError(w, r, errIdeaGone)
+		return
+	}
+	user := actor(r).ID
+	cached, err := s.store.MealIdeas(r.Context(), user, plan.hash)
+	if errors.Is(err, ErrNotFound) {
+		writeError(w, r, errIdeaGone)
+		return
+	}
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	current := cached.keepUsable(plan.slots, plan.open)
+	position := -1
+	shown := []string{}
+	for index, fill := range current.Fills {
+		if fill.Slot != body.Slot {
+			continue
+		}
+		shown = append(shown, fill.Name)
+		if strings.EqualFold(fill.Name, body.Name) {
+			position = index
+		}
+	}
+	if position < 0 {
+		writeError(w, r, errIdeaGone)
+		return
+	}
+	use, err := s.store.ReserveAIUse(r.Context(), user, aiUseIdeaAgain, maxIdeaAgainADay)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if use == uuid.Nil {
+		writeError(w, r, errIdeaAgainLimit)
+		return
+	}
+	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, []string{body.Slot}, nil, 1, shown)
+	fresh := MealIdea{}
+	if err == nil {
+		for _, fill := range ideas.Fills {
+			repeat := false
+			for _, name := range shown {
+				repeat = repeat || strings.EqualFold(name, fill.Name)
+			}
+			if !repeat {
+				fresh = fill
+				break
+			}
+		}
+	}
+	if fresh.Name == "" {
+		log.Printf("[%s] meal idea again failed", middleware.GetReqID(r.Context()))
+		writeError(w, r, errSuggestFailed)
+		return
+	}
+	current.Fills[position] = fresh
+	if err := s.store.SaveMealIdeas(r.Context(), user, plan.hash, body.Day, current); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if err := s.store.FinishAIUse(r.Context(), use); err != nil {
+		log.Printf("[%s] meal idea again: saved but not marked used: %v", middleware.GetReqID(r.Context()), err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"fills": current.Fills, "swaps": current.Swaps, "fresh": true})
 }
 
 // MealIdeas returns the ideas kept for one exact suggest input, or ErrNotFound.
