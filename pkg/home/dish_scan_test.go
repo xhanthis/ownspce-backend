@@ -83,3 +83,32 @@ func TestScanDishRouteChecksTheUploadBeforeTheModel(t *testing.T) {
 		t.Fatalf("scan: %d %v", status, body)
 	}
 }
+
+func TestScanBodyTakesTheTypeTheBytesShow(t *testing.T) {
+	cases := map[string]struct {
+		bytes    string
+		declared string
+		want     string
+	}{
+		"a PNG screenshot the iPhone labelled jpeg": {"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR", "image/jpeg", "image/png"},
+		"a JPEG labelled png":                       {"\xff\xd8\xff\xe0\x00\x10JFIF", "image/png", "image/jpeg"},
+		"a GIF labelled jpeg":                       {"GIF89a\x01\x00\x01\x00", "image/jpeg", "image/gif"},
+		"a WebP labelled jpeg":                      {"RIFF\x24\x00\x00\x00WEBPVP8 ", "image/jpeg", "image/webp"},
+		"a true JPEG keeps its label":               {"\xff\xd8\xff\xdb\x00\x43", "image/jpeg", "image/jpeg"},
+		"bytes no sniffer knows keep the label":     {"hello", "image/webp", "image/webp"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			payload := `{"image":"` + base64.StdEncoding.EncodeToString([]byte(tc.bytes)) + `","mediaType":"` + tc.declared + `"}`
+			request := httptest.NewRequest(http.MethodPost, "/v1/dishes/scan", strings.NewReader(payload))
+			request.Header.Set("Content-Type", "application/json")
+			body, err := readScanBody(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if body.MediaType != tc.want {
+				t.Fatalf("media type: got %s, want %s", body.MediaType, tc.want)
+			}
+		})
+	}
+}

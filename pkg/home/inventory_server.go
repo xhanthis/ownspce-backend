@@ -207,8 +207,10 @@ func (s *Server) scanInventory(w http.ResponseWriter, r *http.Request) {
 }
 
 // readScanBody decodes a photo upload and checks it is an image type the model accepts, at most maxScanImageSize
-// once decoded. The base64 text itself is what goes on to the model.
+// once decoded. The base64 text itself is what goes on to the model, under the type its bytes show: the model refuses
+// a photo whose label does not match, and the iPhone app labels every pick image/jpeg, screenshots (PNG) included.
 // Returns: the body, or the 400 that says what was wrong with it
+// Handles: a mislabelled JPEG, PNG, WebP or GIF (relabelled), bytes no sniffer knows (the label stands)
 func readScanBody(r *http.Request) (scanBody, error) {
 	var body scanBody
 	if err := decode(r, &body); err != nil {
@@ -220,6 +222,9 @@ func readScanBody(r *http.Request) (scanBody, error) {
 	raw, err := base64.StdEncoding.DecodeString(body.Image)
 	if err != nil || len(raw) == 0 || len(raw) > maxScanImageSize {
 		return scanBody{}, badRequest("image must be base64 and at most 5 MB")
+	}
+	if sniffed := http.DetectContentType(raw); scanMediaTypes[sniffed] {
+		body.MediaType = sniffed
 	}
 	return body, nil
 }
