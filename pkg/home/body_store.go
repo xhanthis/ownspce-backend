@@ -18,6 +18,7 @@ const MaxBodyDaysPerRead = 400
 const MaxBodyDaysPerWrite = 31
 
 // BodyProfile is what the balance maths needs about one member and what they are aiming for. Nil means unset.
+// GoalBy is the day (yyyy-mm-dd) the goal weight should be reached by.
 type BodyProfile struct {
 	HeightCm    *int      `json:"heightCm"`
 	BirthYear   *int      `json:"birthYear"`
@@ -26,6 +27,7 @@ type BodyProfile struct {
 	GoalFatX10  *int      `json:"goalFatX10"`
 	WeeklyG     int       `json:"weeklyG"`
 	ProteinG    *int      `json:"proteinG"`
+	GoalBy      *string   `json:"goalBy"`
 	HealthSync  bool      `json:"healthSync"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 }
@@ -90,7 +92,7 @@ func scanBodyDay(row pgx.CollectableRow) (BodyDay, error) {
 // BodyProfile reads one member's profile, or the defaults when none was saved yet.
 func (s *Store) BodyProfile(ctx context.Context, userID uuid.UUID) (BodyProfile, error) {
 	profile := BodyProfile{WeeklyG: 500}
-	err := s.pool.QueryRow(ctx, "SELECT height_cm, birth_year, sex, goal_weight_g, goal_fat_x10, weekly_g, protein_g, health_sync, updated_at FROM home_body_profiles WHERE user_id = $1", userID).Scan(&profile.HeightCm, &profile.BirthYear, &profile.Sex, &profile.GoalWeightG, &profile.GoalFatX10, &profile.WeeklyG, &profile.ProteinG, &profile.HealthSync, &profile.UpdatedAt)
+	err := s.pool.QueryRow(ctx, "SELECT height_cm, birth_year, sex, goal_weight_g, goal_fat_x10, weekly_g, protein_g, to_char(goal_by, 'YYYY-MM-DD'), health_sync, updated_at FROM home_body_profiles WHERE user_id = $1", userID).Scan(&profile.HeightCm, &profile.BirthYear, &profile.Sex, &profile.GoalWeightG, &profile.GoalFatX10, &profile.WeeklyG, &profile.ProteinG, &profile.GoalBy, &profile.HealthSync, &profile.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return profile, nil
 	}
@@ -102,7 +104,7 @@ func (s *Store) BodyProfile(ctx context.Context, userID uuid.UUID) (BodyProfile,
 
 // SaveBodyProfile writes the whole profile for one member (validated by the caller).
 func (s *Store) SaveBodyProfile(ctx context.Context, userID uuid.UUID, profile BodyProfile) (BodyProfile, error) {
-	if _, err := s.pool.Exec(ctx, "INSERT INTO home_body_profiles (user_id, height_cm, birth_year, sex, goal_weight_g, goal_fat_x10, weekly_g, health_sync, protein_g) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (user_id) DO UPDATE SET height_cm = EXCLUDED.height_cm, birth_year = EXCLUDED.birth_year, sex = EXCLUDED.sex, goal_weight_g = EXCLUDED.goal_weight_g, goal_fat_x10 = EXCLUDED.goal_fat_x10, weekly_g = EXCLUDED.weekly_g, health_sync = EXCLUDED.health_sync, protein_g = EXCLUDED.protein_g, updated_at = now()", userID, profile.HeightCm, profile.BirthYear, profile.Sex, profile.GoalWeightG, profile.GoalFatX10, profile.WeeklyG, profile.HealthSync, profile.ProteinG); err != nil {
+	if _, err := s.pool.Exec(ctx, "INSERT INTO home_body_profiles (user_id, height_cm, birth_year, sex, goal_weight_g, goal_fat_x10, weekly_g, health_sync, protein_g, goal_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::date) ON CONFLICT (user_id) DO UPDATE SET height_cm = EXCLUDED.height_cm, birth_year = EXCLUDED.birth_year, sex = EXCLUDED.sex, goal_weight_g = EXCLUDED.goal_weight_g, goal_fat_x10 = EXCLUDED.goal_fat_x10, weekly_g = EXCLUDED.weekly_g, health_sync = EXCLUDED.health_sync, protein_g = EXCLUDED.protein_g, goal_by = EXCLUDED.goal_by, updated_at = now()", userID, profile.HeightCm, profile.BirthYear, profile.Sex, profile.GoalWeightG, profile.GoalFatX10, profile.WeeklyG, profile.HealthSync, profile.ProteinG, profile.GoalBy); err != nil {
 		return BodyProfile{}, fmt.Errorf("save body profile: %w", err)
 	}
 	return s.BodyProfile(ctx, userID)

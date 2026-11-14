@@ -73,6 +73,7 @@ type bodyProfileBody struct {
 	GoalFatX10  *int    `json:"goalFatX10"`
 	WeeklyG     int     `json:"weeklyG"`
 	ProteinG    *int    `json:"proteinG"`
+	GoalBy      *string `json:"goalBy"`
 	HealthSync  bool    `json:"healthSync"`
 }
 
@@ -110,8 +111,11 @@ func (s *Server) putBodyProfile(w http.ResponseWriter, r *http.Request) {
 	case !between(body.ProteinG, minProteinG, maxProteinG):
 		writeError(w, r, badRequest(fmt.Sprintf("protein target must be %d to %d g a day", minProteinG, maxProteinG)))
 		return
+	case body.GoalBy != nil && (!validDate(*body.GoalBy) || *body.GoalBy < "2000-01-01" || *body.GoalBy > "2100-12-31"):
+		writeError(w, r, badRequest("goal date must be a yyyy-mm-dd date"))
+		return
 	}
-	saved, err := s.store.SaveBodyProfile(r.Context(), actor(r).ID, BodyProfile{HeightCm: body.HeightCm, BirthYear: body.BirthYear, Sex: body.Sex, GoalWeightG: body.GoalWeightG, GoalFatX10: body.GoalFatX10, WeeklyG: body.WeeklyG, ProteinG: body.ProteinG, HealthSync: body.HealthSync})
+	saved, err := s.store.SaveBodyProfile(r.Context(), actor(r).ID, BodyProfile{HeightCm: body.HeightCm, BirthYear: body.BirthYear, Sex: body.Sex, GoalWeightG: body.GoalWeightG, GoalFatX10: body.GoalFatX10, WeeklyG: body.WeeklyG, ProteinG: body.ProteinG, GoalBy: body.GoalBy, HealthSync: body.HealthSync})
 	if err != nil {
 		writeError(w, r, err)
 		return
