@@ -43,6 +43,7 @@ CREATE INDEX IF NOT EXISTS home_insight_notes_user_created_idx ON home_insight_n
 -- AI meal ideas for a day: dishes for empty slots and better options for planned ones, kept per exact input so the same day is never asked twice.
 CREATE TABLE IF NOT EXISTS home_meal_ideas (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, input_hash text NOT NULL, day date NOT NULL, ideas jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, input_hash));
 CREATE INDEX IF NOT EXISTS home_meal_ideas_user_created_idx ON home_meal_ideas (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS home_meal_ideas_user_day_idx ON home_meal_ideas (user_id, day, created_at DESC);
 
 -- Model calls a member asked for, so a daily cap holds: Vit messages and new meal ideas. A reservation not marked done stops counting after a minute.
 CREATE TABLE IF NOT EXISTS home_ai_uses (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, kind text NOT NULL CHECK (kind IN ('vit', 'idea_again')), done boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT now());

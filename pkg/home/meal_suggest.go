@@ -76,10 +76,28 @@ type MealIdea struct {
 	Why         string       `json:"why"`
 }
 
-// MealIdeas is a day's answer: dishes for empty slots and better options for planned dishes.
+// MealIdeas is a day's answer: dishes for empty slots and better options for planned dishes. Asked lists the slots
+// the model has been asked to fill for this day, so a slot it left empty is not asked again on every view.
 type MealIdeas struct {
 	Fills []MealIdea `json:"fills"`
 	Swaps []MealIdea `json:"swaps"`
+	Asked []string   `json:"asked,omitempty"`
+}
+
+// unasked returns the open slots this answer never asked the model for. An answer saved before Asked existed counts
+// every slot it holds a fill for as asked.
+func (ideas MealIdeas) unasked(open []string) []string {
+	asked := set(ideas.Asked...)
+	for _, fill := range ideas.Fills {
+		asked[fill.Slot] = true
+	}
+	missing := []string{}
+	for _, slot := range open {
+		if !asked[slot] {
+			missing = append(missing, slot)
+		}
+	}
+	return missing
 }
 
 // suggestDish is what the model sees of one planned dish.
@@ -353,9 +371,10 @@ func (s *Server) readSuggest(r *http.Request, body suggestBody) (*suggestDay, er
 }
 
 // suggestMeals answers a day card: POST /v1/meals/suggest {day, goal, favourites} → {fills, swaps, fresh}.
-// Every empty slot gets up to ideasPerSlot fills. The same day, dishes, goal and favourites are asked once and then
-// served from the store; a member gets at most maxSuggestCallsADay fresh answers a day, after which an uncached day
-// answers with no ideas.
+// Every empty slot gets up to ideasPerSlot fills. A day is asked once and then served from the store, even after its
+// plan changes: filled slots drop out of the answer, and only a slot that opens and was never asked about costs a new
+// model call (for that slot alone, added to the kept answer). ↻ (suggestAgain) is the way to new ideas. A member gets
+// at most maxSuggestCallsADay fresh answers a day, after which the kept answer (or none) is served as it is.
 // Handles: no key on the server (503), a bad day or goal (400), a past day or a full day (no ideas, no model call),
 // a model failure (502)
 func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
@@ -379,12 +398,19 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := actor(r).ID
-	if cached, err := s.store.MealIdeas(r.Context(), user, plan.hash); err == nil {
-		usable := cached.keepUsable(plan.slots, plan.open)
-		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false})
-		return
-	} else if !errors.Is(err, ErrNotFound) {
+	kept, keptHash, err := s.store.MealIdeasForDay(r.Context(), user, body.Day)
+	found := err == nil
+	if err != nil && !errors.Is(err, ErrNotFound) {
 		writeError(w, r, err)
+		return
+	}
+	missing := plan.slots
+	if found {
+		missing = kept.unasked(plan.slots)
+	}
+	if found && len(missing) == 0 {
+		usable := kept.keepUsable(plan.slots, plan.open)
+		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false})
 		return
 	}
 	calls, err := s.store.MealIdeasToday(r.Context(), user)
@@ -393,34 +419,42 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if calls >= maxSuggestCallsADay {
-		writeJSON(w, http.StatusOK, map[string]any{"fills": empty.Fills, "swaps": empty.Swaps, "fresh": false})
+		usable := kept.keepUsable(plan.slots, plan.open)
+		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false})
 		return
 	}
 
 	swappable := make([]uuid.UUID, 0, len(plan.open))
 	for _, meal := range plan.meals {
-		if _, ok := plan.open[meal.ID]; ok {
+		if _, ok := plan.open[meal.ID]; ok && !found {
 			swappable = append(swappable, meal.ID)
 		}
 	}
-	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, plan.slots, swappable, ideasPerSlot, nil)
+	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, missing, swappable, ideasPerSlot, nil)
 	if err != nil {
 		log.Printf("[%s] meal suggest failed", middleware.GetReqID(r.Context()))
 		writeError(w, r, err)
 		return
 	}
-	usable := ideas.keepUsable(plan.slots, plan.open)
-	if err := s.store.SaveMealIdeas(r.Context(), user, plan.hash, body.Day, usable); err != nil {
+	saved := ideas.keepUsable(missing, plan.open)
+	hash := plan.hash
+	if found {
+		saved = MealIdeas{Fills: append(kept.Fills, saved.Fills...), Swaps: kept.Swaps, Asked: kept.Asked}
+		hash = keptHash
+	}
+	saved.Asked = append(saved.Asked, missing...)
+	if err := s.store.SaveMealIdeas(r.Context(), user, hash, body.Day, saved); err != nil {
 		writeError(w, r, err)
 		return
 	}
+	usable := saved.keepUsable(plan.slots, plan.open)
 	writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": true})
 }
 
 // suggestAgain swaps one idea I did not like for a new one in the same slot:
-// POST /v1/meals/suggest/again {day, goal, favourites, slot, name} → {fills, swaps, fresh}. The body is the same one
-// the day card asked with, so it finds the same kept answer; the new dish takes the old one's place there, so the
-// card keeps it after a reload. The model is told every dish already in that slot, so it never offers one again.
+// POST /v1/meals/suggest/again {day, goal, favourites, slot, name} → {fills, swaps, fresh}. It finds the day's kept
+// answer; the new dish takes the old one's place there, so the card keeps it after a reload, and ideas for slots
+// filled since are kept for the day a slot opens again. The model is told every dish already in that slot, so it never offers one again.
 // Handles: no key (503), a bad body (400), an idea or slot no longer on the day (409), maxIdeaAgainADay used (429),
 // a model failure or an answer that only repeats (502; nothing is used up)
 func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
@@ -447,7 +481,7 @@ func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user := actor(r).ID
-	cached, err := s.store.MealIdeas(r.Context(), user, plan.hash)
+	cached, keptHash, err := s.store.MealIdeasForDay(r.Context(), user, body.Day)
 	if errors.Is(err, ErrNotFound) {
 		writeError(w, r, errIdeaGone)
 		return
@@ -501,7 +535,14 @@ func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current.Fills[position] = fresh
-	if err := s.store.SaveMealIdeas(r.Context(), user, plan.hash, body.Day, current); err != nil {
+	kept := MealIdeas{Fills: current.Fills, Swaps: current.Swaps, Asked: cached.Asked}
+	open := set(plan.slots...)
+	for _, fill := range cached.Fills {
+		if !open[fill.Slot] {
+			kept.Fills = append(kept.Fills, fill)
+		}
+	}
+	if err := s.store.SaveMealIdeas(r.Context(), user, keptHash, body.Day, kept); err != nil {
 		writeError(w, r, err)
 		return
 	}
@@ -511,21 +552,22 @@ func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"fills": current.Fills, "swaps": current.Swaps, "fresh": true})
 }
 
-// MealIdeas returns the ideas kept for one exact suggest input, or ErrNotFound.
-func (s *Store) MealIdeas(ctx context.Context, userID uuid.UUID, inputHash string) (MealIdeas, error) {
+// MealIdeasForDay returns the newest answer kept for one day and the key it is stored under, or ErrNotFound.
+func (s *Store) MealIdeasForDay(ctx context.Context, userID uuid.UUID, day string) (MealIdeas, string, error) {
 	var raw []byte
-	err := s.pool.QueryRow(ctx, "SELECT ideas FROM home_meal_ideas WHERE user_id = $1 AND input_hash = $2", userID, inputHash).Scan(&raw)
+	var inputHash string
+	err := s.pool.QueryRow(ctx, "SELECT input_hash, ideas FROM home_meal_ideas WHERE user_id = $1 AND day = $2::date ORDER BY created_at DESC LIMIT 1", userID, day).Scan(&inputHash, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return MealIdeas{}, ErrNotFound
+		return MealIdeas{}, "", ErrNotFound
 	}
 	if err != nil {
-		return MealIdeas{}, fmt.Errorf("read meal ideas: %w", err)
+		return MealIdeas{}, "", fmt.Errorf("read meal ideas: %w", err)
 	}
 	var ideas MealIdeas
 	if err := json.Unmarshal(raw, &ideas); err != nil {
-		return MealIdeas{}, fmt.Errorf("decode meal ideas: %w", err)
+		return MealIdeas{}, "", fmt.Errorf("decode meal ideas: %w", err)
 	}
-	return ideas, nil
+	return ideas, inputHash, nil
 }
 
 // MealIdeasToday counts the answers written for this member since midnight UTC, for the daily model-call cap.
