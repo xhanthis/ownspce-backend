@@ -193,6 +193,62 @@ func TestSuggestRouteAsksOnceServesTheCacheAndDropsEatenDishes(t *testing.T) {
 	}
 }
 
+func TestSuggestRouteKeepsADaysIdeasWhenItsPlanChanges(t *testing.T) {
+	store := testStore(t)
+	username, password := testUser(t, store)
+	reply := `{"fills":[` + idea("slot", "breakfast", "Moong chilla", 280) + `,` + idea("slot", "lunch", "Dal rice", 480) + `,` + idea("slot", "dinner", "Palak khichdi", 420) + `],"swaps":[]}`
+	vision, calls, seen := countingModel(t, reply)
+	server := httptest.NewServer(newServer(store, Config{AllowLocalhost: true}, vision))
+	t.Cleanup(server.Close)
+	token := signIn(t, server, username, password)
+	day := testDays(1)[0]
+	menu := map[string]any{"days": []any{map[string]any{"day": day, "meals": []any{mealRow("lunch", "Veg Biryani", 540)}}}}
+	if status, body := call(t, server, http.MethodPost, "/v1/meals/import", token, menu); status != http.StatusOK {
+		t.Fatalf("import: %d %v", status, body)
+	}
+	biryani := mealsOn(t, server, token, day, day)[0]["id"].(string)
+	ask := map[string]any{"day": day, "goal": map[string]any{"goalWeightKg": 70}}
+	names := func(body map[string]any) []string {
+		out := []string{}
+		for _, fill := range body["fills"].([]any) {
+			out = append(out, fill.(map[string]any)["name"].(string))
+		}
+		return out
+	}
+
+	if status, first := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask); status != http.StatusOK || strings.Join(names(first), ",") != "Moong chilla,Palak khichdi" || calls.Load() != 5 {
+		t.Fatalf("first ask fills breakfast and dinner; snack and late come back empty: %d %v, %d calls", status, first, calls.Load())
+	}
+
+	breakfast := mealRow("breakfast", "Upma", 300)
+	breakfast["day"] = day
+	status, added := call(t, server, http.MethodPost, "/v1/meals", token, breakfast)
+	if status != http.StatusCreated {
+		t.Fatalf("add breakfast: %d %v", status, added)
+	}
+	if status, kept := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask); status != http.StatusOK || kept["fresh"] != false || strings.Join(names(kept), ",") != "Palak khichdi" || calls.Load() != 5 {
+		t.Fatalf("a dish added to the plan asks nothing new and its slot's ideas drop out: %d %v, %d calls", status, kept, calls.Load())
+	}
+
+	if status, _ := call(t, server, http.MethodDelete, "/v1/meals/"+biryani, token, nil); status >= 300 {
+		t.Fatalf("remove lunch: %d", status)
+	}
+	before := len(seen.all())
+	if status, opened := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask); status != http.StatusOK || opened["fresh"] != true || strings.Join(names(opened), ",") != "Palak khichdi,Dal rice" || calls.Load() != 6 {
+		t.Fatalf("a slot never asked about costs one call for that slot alone: %d %v, %d calls", status, opened, calls.Load())
+	}
+	if prompt := seen.all()[before]; !strings.Contains(prompt, `fill it: ["lunch"]`) || !strings.Contains(prompt, `Ids: []`) {
+		t.Fatalf("only lunch is asked, with no swaps: %s", prompt)
+	}
+
+	if status, _ := call(t, server, http.MethodDelete, "/v1/meals/"+added["id"].(string), token, nil); status >= 300 {
+		t.Fatalf("remove breakfast: %d", status)
+	}
+	if status, back := call(t, server, http.MethodPost, "/v1/meals/suggest", token, ask); status != http.StatusOK || back["fresh"] != false || strings.Join(names(back), ",") != "Moong chilla,Palak khichdi,Dal rice" || calls.Load() != 6 {
+		t.Fatalf("a slot that opens again gets its kept ideas back with no call: %d %v, %d calls", status, back, calls.Load())
+	}
+}
+
 func TestSuggestAgainSwapsOneIdeaInPlaceAndKeepsIt(t *testing.T) {
 	store := testStore(t)
 	username, password := testUser(t, store)
