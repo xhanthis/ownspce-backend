@@ -26,12 +26,12 @@ func TestBodyProfileRoundTripsAndRefusesBadValues(t *testing.T) {
 		t.Fatalf("defaults: %v", fresh)
 	}
 
-	status, saved := call(t, server, http.MethodPut, "/v1/body/profile", token, map[string]any{"heightCm": 176, "birthYear": 1992, "sex": "male", "goalWeightG": 72000, "goalFatX10": 180, "weeklyG": 500, "healthSync": true})
-	if status != http.StatusOK || saved["heightCm"].(float64) != 176 || saved["healthSync"] != true || saved["goalFatX10"].(float64) != 180 {
+	status, saved := call(t, server, http.MethodPut, "/v1/body/profile", token, map[string]any{"heightCm": 176, "birthYear": 1992, "sex": "male", "goalWeightG": 72000, "goalFatX10": 180, "weeklyG": 500, "goalBy": "2027-04-05", "healthSync": true})
+	if status != http.StatusOK || saved["heightCm"].(float64) != 176 || saved["healthSync"] != true || saved["goalFatX10"].(float64) != 180 || saved["goalBy"] != "2027-04-05" {
 		t.Fatalf("save profile: %d %v", status, saved)
 	}
 	status, saved = call(t, server, http.MethodPut, "/v1/body/profile", token, map[string]any{"heightCm": 176, "weeklyG": 250})
-	if status != http.StatusOK || saved["sex"] != nil || saved["weeklyG"].(float64) != 250 {
+	if status != http.StatusOK || saved["sex"] != nil || saved["goalBy"] != nil || saved["weeklyG"].(float64) != 250 {
 		t.Fatalf("a field left out clears: %d %v", status, saved)
 	}
 
@@ -43,6 +43,8 @@ func TestBodyProfileRoundTripsAndRefusesBadValues(t *testing.T) {
 		"pace":      {"weeklyG": 50},
 		"unknown":   {"weeklyG": 500, "extra": 1},
 		"fat range": {"goalFatX10": 900, "weeklyG": 500},
+		"goal date": {"goalBy": "5 April 2027", "weeklyG": 500},
+		"no day":    {"goalBy": "2027-02-30", "weeklyG": 500},
 	}
 	for label, body := range cases {
 		if status, _ := call(t, server, http.MethodPut, "/v1/body/profile", token, body); status != http.StatusBadRequest {

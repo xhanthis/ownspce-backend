@@ -25,28 +25,31 @@ const (
 	maxIdeaAgainADay     = 30
 	maxSuggestFavourites = 10
 	maxSuggestWhy        = 140
-	ideasPerSlot         = 3
+	maxSuggestWeek       = 40
+	maxSuggestTries      = 3
+	ideasPerSlot         = 1
 	suggestMaxTokens     = 3000
 )
 
-// suggestSlots are the slots an empty day is filled in, in the order of the day.
-var suggestSlots = []string{"breakfast", "lunch", "snack", "dinner", "late"}
+// suggestSlots are the slots an empty day is filled in, in the order of the day. Late night is left out: a goal of
+// losing fat is never helped by an idea to eat again before bed.
+var suggestSlots = []string{"breakfast", "lunch", "snack", "dinner"}
 
 var errSuggestUnavailable = apiError{status: http.StatusServiceUnavailable, Code: "suggest_unavailable", Message: "meal suggestions are not set up on this server"}
 var errSuggestFailed = apiError{status: http.StatusBadGateway, Code: "suggest_failed", Message: "could not think of suggestions this time"}
 var errIdeaAgainLimit = apiError{status: http.StatusTooManyRequests, Code: "idea_limit", Message: "that is enough new ideas for today, try again tomorrow"}
 var errIdeaGone = apiError{status: http.StatusConflict, Code: "idea_gone", Message: "that idea is no longer on the day, pull to refresh"}
 
-const suggestPrompt = `You plan meals for one person who cooks at home in Pune, India. The goal is to eat better, healthier and tastier while reaching their body goal.
+const suggestPrompt = `You plan meals for one person who cooks at home in Pune, India. The goal is to eat better, healthier and tastier while reaching their body goal: lose fat down to the goal weight by the goal date (goalBy) while building muscle.
 Their goal and figures, as JSON (weights in kilograms, food in kilocalories and grams; missing keys are unknown): %s
 Dishes they eat most, so you know their taste: %s
 Their plan for %s, one entry per dish with its id, slot, name and the calories and protein of one plate: %s
 
-1. For each of these empty slots, suggest %d different real home dishes to fill it: %s
+1. Fill EVERY one of these empty slots with %d real home dish(es) each; never leave one of them out: %s
 2. For each dish whose id is in this list, suggest a swap ONLY when a clearly better option exists: healthier for their goal (fewer calories, or more protein for a similar plate) and still tasty and close in spirit, the way Veg Biryani becomes Veg Pulao with raita. When the dish is already a good choice, leave it out. Ids: %s
-Never suggest any of these dishes again: %s
+Already on their week or turned down, so never suggest any of these: %s
 
-Keep the whole day near what their goal needs and push protein toward the target: size each idea to the calories and protein the plan still leaves. Follow the diet their dishes show: if no meat, fish or egg appears, suggest none. Prefer dishes they already like or close cousins of them. "snack" is evening tea time; "late" is a late-night bite, so keep it light, under 200 kcal.
+Keep the whole day at the daily calorie target (kcalTargetDay) so the week adds up to the weekly pace, and reach the protein target (proteinTargetG) to build muscle: size each idea to the calories and protein the plan still leaves, and give breakfast, lunch and dinner at least 25 g of protein each. Vary the week: a different main protein (paneer, dal, chana, rajma, soya, curd, eggs, chicken, fish, as their diet allows) from day to day. Follow the diet their dishes show: if no meat, fish or egg appears, suggest none. Prefer dishes they already like or close cousins of them. "snack" is evening tea time; "late" is a late-night bite, so keep it light, under 200 kcal.
 Give calories, protein, carbs and fat for ONE normal adult serving. List the ingredients to cook it for TWO people with an amount the kitchen can count (grams or kilograms, millilitres or litres, or pieces), skipping spices, salt, oil and other pantry staples, at most 12. "name" is a plain dish name of at most 50 characters. "why" is one short plain sentence of at most 100 characters naming the gain, such as "120 kcal lighter, same comfort". Use only the slots and ids given above; empty lists are fine.`
 
 // suggestSchema is the JSON a suggestion answer must follow: fills for empty slots and swaps for planned dishes,
@@ -76,24 +79,23 @@ type MealIdea struct {
 	Why         string       `json:"why"`
 }
 
-// MealIdeas is a day's answer: dishes for empty slots and better options for planned dishes. Asked lists the slots
-// the model has been asked to fill for this day, so a slot it left empty is not asked again on every view.
+// MealIdeas is a day's answer: dishes for empty slots and better options for planned dishes. Tries counts, per slot,
+// the times the model was asked to fill it, so a slot it keeps leaving empty is asked at most maxSuggestTries times.
 type MealIdeas struct {
-	Fills []MealIdea `json:"fills"`
-	Swaps []MealIdea `json:"swaps"`
-	Asked []string   `json:"asked,omitempty"`
+	Fills []MealIdea     `json:"fills"`
+	Swaps []MealIdea     `json:"swaps"`
+	Tries map[string]int `json:"tries,omitempty"`
 }
 
-// unasked returns the open slots this answer never asked the model for. An answer saved before Asked existed counts
-// every slot it holds a fill for as asked.
-func (ideas MealIdeas) unasked(open []string) []string {
-	asked := set(ideas.Asked...)
+// toAsk returns the open slots this answer holds no idea for and that still have tries left, in the order given.
+func (ideas MealIdeas) toAsk(open []string) []string {
+	filled := map[string]bool{}
 	for _, fill := range ideas.Fills {
-		asked[fill.Slot] = true
+		filled[fill.Slot] = true
 	}
 	missing := []string{}
 	for _, slot := range open {
-		if !asked[slot] {
+		if !filled[slot] && ideas.Tries[slot] < maxSuggestTries {
 			missing = append(missing, slot)
 		}
 	}
@@ -313,6 +315,7 @@ type suggestBody struct {
 	Favourites []string       `json:"favourites"`
 	Slot       string         `json:"slot"`
 	Name       string         `json:"name"`
+	Week       []string       `json:"week"`
 }
 
 // suggestDay is one suggest request read against the plan: what to ask, its cache key, and what is open.
@@ -322,10 +325,12 @@ type suggestDay struct {
 	slots []string
 	open  map[uuid.UUID]string
 	meals []Meal
+	week  []string
 }
 
 // readSuggest validates a suggest body and reads the day's plan. The dishes always come from the plan, never from
-// the app, so the same day, dishes, goal and favourites give the same cache key.
+// the app, so the same day, dishes, goal and favourites give the same cache key. Week (dishes on the week's other
+// days) only steers variety and is not part of the key.
 // Returns: the day, or nil with nothing to do (a past day, or every slot filled and every dish eaten); a 400 for a
 // bad day or goal
 func (s *Server) readSuggest(r *http.Request, body suggestBody) (*suggestDay, error) {
@@ -348,6 +353,13 @@ func (s *Server) readSuggest(r *http.Request, body suggestBody) (*suggestDay, er
 			favourites = append(favourites, name)
 		}
 	}
+	week := []string{}
+	for _, name := range body.Week {
+		name = strings.Join(strings.Fields(name), " ")
+		if textBetween(name, 1, maxDishNameText) && len(week) < maxSuggestWeek {
+			week = append(week, name)
+		}
+	}
 	if day.Before(time.Now().UTC().AddDate(0, 0, -1).Truncate(24 * time.Hour)) {
 		return nil, nil
 	}
@@ -367,14 +379,15 @@ func (s *Server) readSuggest(r *http.Request, body suggestBody) (*suggestDay, er
 	if err != nil {
 		return nil, fmt.Errorf("encode suggest input: %w", err)
 	}
-	return &suggestDay{input: input, hash: figuresHash(encoded), slots: slots, open: open, meals: meals}, nil
+	return &suggestDay{input: input, hash: figuresHash(encoded), slots: slots, open: open, meals: meals, week: week}, nil
 }
 
-// suggestMeals answers a day card: POST /v1/meals/suggest {day, goal, favourites} → {fills, swaps, fresh}.
-// Every empty slot gets up to ideasPerSlot fills. A day is asked once and then served from the store, even after its
-// plan changes: filled slots drop out of the answer, and only a slot that opens and was never asked about costs a new
-// model call (for that slot alone, added to the kept answer). ↻ (suggestAgain) is the way to new ideas. A member gets
-// at most maxSuggestCallsADay fresh answers a day, after which the kept answer (or none) is served as it is.
+// suggestMeals answers a day: POST /v1/meals/suggest {day, goal, favourites, week} → {fills, swaps, fresh, pending}.
+// Every empty slot gets ideasPerSlot fills. A day is asked once and then served from the store, even after its plan
+// changes: filled slots leave the answer. An open slot with no idea (one the model skipped, or one that opened since)
+// is asked again, for the missing slots alone and added to the kept answer, at most maxSuggestTries times a slot;
+// pending says the app may ask once more. ↻ (suggestAgain) is the way to new ideas. A member gets at most
+// maxSuggestCallsADay new days a day, after which the kept answer (or none) is served as it is.
 // Handles: no key on the server (503), a bad day or goal (400), a past day or a full day (no ideas, no model call),
 // a model failure (502)
 func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
@@ -392,9 +405,8 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	empty := MealIdeas{Fills: []MealIdea{}, Swaps: []MealIdea{}}
 	if plan == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"fills": empty.Fills, "swaps": empty.Swaps, "fresh": false})
+		writeJSON(w, http.StatusOK, map[string]any{"fills": []MealIdea{}, "swaps": []MealIdea{}, "fresh": false, "pending": false})
 		return
 	}
 	user := actor(r).ID
@@ -404,24 +416,25 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	missing := plan.slots
-	if found {
-		missing = kept.unasked(plan.slots)
+	serveKept := func() {
+		usable := kept.keepUsable(plan.slots, plan.open)
+		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false, "pending": false})
 	}
+	missing := kept.toAsk(plan.slots)
 	if found && len(missing) == 0 {
-		usable := kept.keepUsable(plan.slots, plan.open)
-		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false})
+		serveKept()
 		return
 	}
-	calls, err := s.store.MealIdeasToday(r.Context(), user)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	if calls >= maxSuggestCallsADay {
-		usable := kept.keepUsable(plan.slots, plan.open)
-		writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": false})
-		return
+	if !found {
+		calls, err := s.store.MealIdeasToday(r.Context(), user)
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		if calls >= maxSuggestCallsADay {
+			serveKept()
+			return
+		}
 	}
 
 	swappable := make([]uuid.UUID, 0, len(plan.open))
@@ -430,29 +443,36 @@ func (s *Server) suggestMeals(w http.ResponseWriter, r *http.Request) {
 			swappable = append(swappable, meal.ID)
 		}
 	}
-	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, missing, swappable, ideasPerSlot, nil)
+	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, missing, swappable, ideasPerSlot, plan.week)
 	if err != nil {
 		log.Printf("[%s] meal suggest failed", middleware.GetReqID(r.Context()))
 		writeError(w, r, err)
 		return
 	}
-	saved := ideas.keepUsable(missing, plan.open)
+	fresh := ideas.keepUsable(missing, plan.open)
+	tries := map[string]int{}
+	for slot, count := range kept.Tries {
+		tries[slot] = count
+	}
+	for _, slot := range missing {
+		tries[slot]++
+	}
+	saved := MealIdeas{Fills: append(kept.Fills, fresh.Fills...), Swaps: fresh.Swaps, Tries: tries}
 	hash := plan.hash
 	if found {
-		saved = MealIdeas{Fills: append(kept.Fills, saved.Fills...), Swaps: kept.Swaps, Asked: kept.Asked}
+		saved.Swaps = kept.Swaps
 		hash = keptHash
 	}
-	saved.Asked = append(saved.Asked, missing...)
 	if err := s.store.SaveMealIdeas(r.Context(), user, hash, body.Day, saved); err != nil {
 		writeError(w, r, err)
 		return
 	}
 	usable := saved.keepUsable(plan.slots, plan.open)
-	writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": true})
+	writeJSON(w, http.StatusOK, map[string]any{"fills": usable.Fills, "swaps": usable.Swaps, "fresh": true, "pending": len(saved.toAsk(plan.slots)) > 0})
 }
 
 // suggestAgain swaps one idea I did not like for a new one in the same slot:
-// POST /v1/meals/suggest/again {day, goal, favourites, slot, name} → {fills, swaps, fresh}. It finds the day's kept
+// POST /v1/meals/suggest/again {day, goal, favourites, week, slot, name} → {fills, swaps, fresh}. It finds the day's kept
 // answer; the new dish takes the old one's place there, so the card keeps it after a reload, and ideas for slots
 // filled since are kept for the day a slot opens again. The model is told every dish already in that slot, so it never offers one again.
 // Handles: no key (503), a bad body (400), an idea or slot no longer on the day (409), maxIdeaAgainADay used (429),
@@ -515,7 +535,7 @@ func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, errIdeaAgainLimit)
 		return
 	}
-	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, []string{body.Slot}, nil, 1, shown)
+	ideas, err := s.vision.SuggestMeals(r.Context(), plan.input, []string{body.Slot}, nil, 1, append(append([]string{}, shown...), plan.week...))
 	fresh := MealIdea{}
 	if err == nil {
 		for _, fill := range ideas.Fills {
@@ -535,7 +555,7 @@ func (s *Server) suggestAgain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	current.Fills[position] = fresh
-	kept := MealIdeas{Fills: current.Fills, Swaps: current.Swaps, Asked: cached.Asked}
+	kept := MealIdeas{Fills: current.Fills, Swaps: current.Swaps, Tries: cached.Tries}
 	open := set(plan.slots...)
 	for _, fill := range cached.Fills {
 		if !open[fill.Slot] {

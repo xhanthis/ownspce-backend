@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS home_body_days (user_id uuid NOT NULL REFERENCES home
 -- Insights: a night's sleep beside the day's steps, a protein target on the profile, and whether a meal was ordered in.
 ALTER TABLE home_body_days ADD COLUMN IF NOT EXISTS sleep_min integer CHECK (sleep_min BETWEEN 0 AND 1440), ADD COLUMN IF NOT EXISTS sleep_source text CHECK (sleep_source IN ('health', 'manual'));
 ALTER TABLE home_body_profiles ADD COLUMN IF NOT EXISTS protein_g integer CHECK (protein_g BETWEEN 20 AND 400);
+ALTER TABLE home_body_profiles ADD COLUMN IF NOT EXISTS goal_by date;
 ALTER TABLE home_meals ADD COLUMN IF NOT EXISTS ordered_in boolean NOT NULL DEFAULT false;
 CREATE TABLE IF NOT EXISTS home_insight_notes (user_id uuid NOT NULL REFERENCES home_users(id) ON DELETE CASCADE, figures_hash text NOT NULL, note text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (user_id, figures_hash));
 CREATE INDEX IF NOT EXISTS home_insight_notes_user_created_idx ON home_insight_notes (user_id, created_at DESC);
